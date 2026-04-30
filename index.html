@@ -106,7 +106,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 /* ── BOARD ── */
 .mainarea{display:flex;gap:14px}
 .boardwrap{flex:1;min-width:0}
-.board{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr))}
+.board{display:grid;column-gap:10px;row-gap:48px;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr))}
 .jpcol{width:260px;flex-shrink:0}
 
 /* ── TECH COLUMN ── */
@@ -296,7 +296,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 
   <!-- Tech View -->
   <div id="techView">
-    <button class="tv-show-all" id="tvShowAll" onclick="showAdminView()">📋 View All Tickets</button>
+    <button class="tv-show-all" id="tvShowAll" onclick="showAdminView()">📋 Full Ticket Schedule</button>
     <div class="mapsec" id="mapsecTech" style="display:none">
       <div class="maphdr">
         <div class="maphdr-left">
@@ -499,9 +499,8 @@ let shopModalTech = null, shopModalSelected = null;
   const mapTag = document.getElementById('mapTag');
   if(mapTag) mapTag.textContent = new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
 
-  // Load saved shop visits from sessionStorage
-  try { shopVisits = JSON.parse(sessionStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
-  console.log('Loaded shopVisits:', JSON.stringify(shopVisits));
+  // Load saved shop visits from localStorage (overridden by sheet on first loadData)
+  try { shopVisits = JSON.parse(localStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
 
   // Try auto-login from session
   const saved = sessionStorage.getItem('wrs_user');
@@ -676,6 +675,31 @@ async function sheetsSetValue(row, col, value) {
   });
 }
 
+async function saveShopToSheet(tech, data) {
+  const col = TECHS.indexOf(tech) + 1;
+  if (col < 1) return;
+  const val = data ? JSON.stringify(data) : '';
+  await sheetsSetValue(5, col, val);
+}
+
+async function loadShopsFromSheet() {
+  try {
+    const resp = await sheetsGet('Sheet1!A5:K5');
+    const row = resp.values?.[0] || [];
+    const loaded = {};
+    row.forEach((cell, i) => {
+      if (cell && cell.trim()) {
+        try { loaded[TECHS[i]] = JSON.parse(cell); } catch(e) {}
+      }
+    });
+    // Merge into shopVisits
+    Object.keys(loaded).forEach(k => shopVisits[k] = loaded[k]);
+    // Clear any techs no longer in sheet
+    TECHS.forEach(t => { if (loaded[t] === undefined) delete shopVisits[t]; });
+    return loaded;
+  } catch(e) { return {}; }
+}
+
 async function sheetsClear(row, col) {
   const range = `Sheet1!${colLetter(col)}${row}`;
   await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
@@ -750,6 +774,8 @@ async function loadData() {
     document.getElementById('loadEl').style.display = 'none';
     document.getElementById('mainarea').style.display = 'flex';
 
+    // Load shop assignments from sheet (syncs between admin and tech devices)
+    await loadShopsFromSheet();
     if (isTech && !viewingAll) renderTechView();
     else { render(); initMap(); updateMap(); }
     renderNotes();
@@ -1057,20 +1083,24 @@ function selectShop(shop) {
 function confirmShop() {
   if (!shopModalTech || !shopModalSelected) return;
   const notes = document.getElementById('shopNoteInput').value.trim();
-  shopVisits[shopModalTech] = { shop: shopModalSelected, notes };
-  sessionStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+  const savedTech = shopModalTech; // save before closeShopModal clears it
+  const savedShop = shopModalSelected;
+  shopVisits[savedTech] = { shop: savedShop, notes };
+  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
   closeShopModal();
-  render();
-  // Always re-render tech view if this tech is viewing their home
-  if (isTech && !viewingAll) renderTechView();
-  else if (!isTech) render(); // admins see it on the board
-  toast(`${shopModalTech} → ${shopModalSelected}`);
+  render(); // update the board columns
+  // Re-render tech view immediately — covers both the owning tech and admin view
+  if (isTech && !viewingAll) {
+    renderTechView();
+  }
+  toast(`${savedTech} → ${savedShop}`);
 }
 
 function clearShop(tech) {
   delete shopVisits[tech];
-  sessionStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
   render();
+  saveShopToSheet(tech, null).catch(() => {});
   toast(`Shop removed from ${tech}`);
 }
 
@@ -1249,7 +1279,7 @@ async function renderTechView() {
   if (!curUser?.tech) return;
   const tech = curUser.tech;
   // Reload shop visits fresh from sessionStorage each render
-  try { const s=sessionStorage.getItem('wrs_shops'); if(s) { const parsed=JSON.parse(s); Object.keys(parsed).forEach(k=>shopVisits[k]=parsed[k]); }} catch(e){}
+  try { const s=localStorage.getItem('wrs_shops'); if(s) { const parsed=JSON.parse(s); Object.keys(parsed).forEach(k=>shopVisits[k]=parsed[k]); }} catch(e){}
   const sv = shopVisits[tech];
   console.log('renderTechView tech='+tech+' sv='+JSON.stringify(sv));
   const tc = TC[tech]||'#888';
