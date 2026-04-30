@@ -923,12 +923,12 @@ function rBoard() {
     if (canWrite) h += `<div class="arow"><input class="ainp" placeholder="New ticket…" id="ai_${tech}" onkeydown="if(event.key==='Enter')addJ('${tech}')"><button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJ('${tech}')">+</button></div>`;
     h += `<div class="thdr">
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
-      ${sv ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
-      <span class="tcnt">${tj.length + (sv?1:0)}</span>
+      ${sv && sv.shop ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
+      <span class="tcnt">${tj.length + (sv && sv.shop?1:0)}</span>
     </div>
     <div class="tjobs" data-tech="${tech}">`;
     // Shop card first if set
-    if (sv) {
+    if (sv && sv.shop) {
       const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
       h += `<div class="jc" style="border-left-color:${tc};background:rgba(255,255,255,.05);cursor:default">
         <span class="jsd" style="background:${tc}"></span>
@@ -939,7 +939,7 @@ function rBoard() {
         </div>
       </div>`;
     }
-    if (!tj.length && !sv) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
+    if (!tj.length && !(sv && sv.shop)) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
     else tj.forEach(j => { h += jobCard(j, canWrite); });
     h += `</div></div>`;
   });
