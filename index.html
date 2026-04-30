@@ -730,9 +730,13 @@ function hexToRgb(hex) {
   return { red: r, green: g, blue: b };
 }
 function rgbToHex(rgb) {
-  if (!rgb) return '#ffffff';
-  const r = Math.round((rgb.red||0)*255), g = Math.round((rgb.green||0)*255), b = Math.round((rgb.blue||0)*255);
-  return '#' + [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+  try {
+    if (!rgb || typeof rgb !== 'object') return '#ffffff';
+    const r = Math.round(((rgb.red)||0)*255);
+    const g = Math.round(((rgb.green)||0)*255);
+    const b = Math.round(((rgb.blue)||0)*255);
+    return '#' + [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+  } catch(e) { return '#ffffff'; }
 }
 function colLetter(n) { let s=''; while(n>0){s=String.fromCharCode(64+(n%26||26))+s;n=Math.floor((n-1)/26);} return s; }
 
@@ -774,8 +778,8 @@ async function loadData() {
     // Re-add row 2 shop tickets (read above, cleared by jobs=[])
     row2data.forEach((cell, ci) => {
       const v = cell?.userEnteredValue?.stringValue || '';
-      const bgRaw2 = cell?.userEnteredFormat?.backgroundColor;
-      const hex2 = rgbToHex(bgRaw2);
+      const bgRaw2 = cell?.userEnteredFormat?.backgroundColor || null;
+      const hex2 = bgRaw2 ? rgbToHex(bgRaw2) : '#ffffff';
       if (v && v.trim() && (HEX_TO_STATUS[hex2]||'none') === 'green') {
         const parsed = parseJob(v);
         const j2 = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: parsed.addr, color: 'green', row: 2, col: ci+1, lat: null, lng: null };
@@ -790,8 +794,8 @@ async function loadData() {
         const cell = rowData[c];
         const val = cell?.userEnteredValue?.stringValue || cell?.userEnteredValue?.formulaValue || '';
         if (!val || !val.trim()) continue;
-        const bgRaw = cell?.userEnteredFormat?.backgroundColor;
-        const hex = rgbToHex(bgRaw);
+        const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
+        const hex = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
         const status = HEX_TO_STATUS[hex] || 'none';
         const parsed = parseJob(val);
         const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+2, col: c+1, lat: null, lng: null };
