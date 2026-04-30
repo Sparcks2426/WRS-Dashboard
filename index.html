@@ -502,14 +502,25 @@ let shopModalTech = null, shopModalSelected = null;
   // Load saved shop visits from localStorage (overridden by sheet on first loadData)
   try { shopVisits = JSON.parse(localStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
 
-  // Try auto-login from session
-  const saved = sessionStorage.getItem('wrs_user');
-  if (saved) {
-    try {
+  // Auto-login: within 24hrs no prompt, within 30 days pre-fill name
+  try {
+    const saved = localStorage.getItem('wrs_user');
+    if (saved) {
       const u = JSON.parse(saved);
-      if (u && u.name) { acquireToken(() => startDash(u)); return; }
-    } catch(e) {}
-  }
+      const age = Date.now() - (u.saved || 0);
+      const DAY = 24*60*60*1000, MONTH = 30*DAY;
+      if (u && u.name && age < MONTH) {
+        if (age < DAY) {
+          // Within 24hrs — auto-login silently
+          acquireToken(() => startDash(u)); return;
+        } else {
+          // 1-30 days — pre-fill name on login screen
+          const sel = document.getElementById('loginName');
+          if (sel) sel.value = u.name;
+        }
+      }
+    }
+  } catch(e) {}
 })();
 
 document.getElementById('loginPin').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
@@ -559,14 +570,15 @@ function doLogin() {
   btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
   acquireToken(() => {
     btn.disabled = false; btn.textContent = 'Sign In →';
-    sessionStorage.setItem('wrs_user', JSON.stringify({ name: user.name, role: user.role, tech: user.tech || '' }));
+    const authData = { name: user.name, role: user.role, tech: user.tech || '', saved: Date.now() };
+    localStorage.setItem('wrs_user', JSON.stringify(authData));
     startDash({ name: user.name, role: user.role, tech: user.tech || '' });
   });
 }
 
 function doLogout() {
   if (gAccessToken) { google.accounts.oauth2.revoke(gAccessToken); gAccessToken = null; }
-  sessionStorage.removeItem('wrs_user');
+  localStorage.removeItem('wrs_user');
   curUser = null; canWrite = false; isTech = false; viewingAll = false;
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('dashWrap').style.display = 'none';
@@ -775,8 +787,7 @@ async function loadData() {
     document.getElementById('loadEl').style.display = 'none';
     document.getElementById('mainarea').style.display = 'flex';
 
-    // Load shop assignments from sheet (syncs between admin and tech devices)
-    await loadShopsFromSheet();
+    // Shop visits loaded from localStorage (written as real tickets to sheet)
     if (isTech && !viewingAll) renderTechView();
     else { render(); initMap(); updateMap(); }
     renderNotes();
@@ -1081,28 +1092,60 @@ function selectShop(shop) {
   document.getElementById('shopNoteInput').focus();
 }
 
-function confirmShop() {
+async function confirmShop() {
   if (!shopModalTech || !shopModalSelected) return;
   const notes = document.getElementById('shopNoteInput').value.trim();
-  const savedTech = shopModalTech; // save before closeShopModal clears it
+  const savedTech = shopModalTech;
   const savedShop = shopModalSelected;
+  const shopAddr = SHOP_LOCATIONS[savedShop]?.address || '';
+  closeShopModal();
+  toast('Adding shop ticket...');
+
+  const col = TECHS.indexOf(savedTech) + 1;
+  if (col < 1) { toast('Tech not found'); return; }
+
+  // Shift existing jobs in this tech's column down by one row (18→skip, 17→18, etc)
+  const techJobs = jobs.filter(j=>j.tech===savedTech&&j.color!=='none').sort((a,b)=>(b.row||0)-(a.row||0));
+  for (const j of techJobs) {
+    if (j.row < 18) {
+      await sheetsSetValue(j.row+1, j.col, j.job+(j.address?', '+j.address:''));
+      await sheetsSetBackground(j.row+1, j.col, STATUS_TO_HEX[j.color]||'#ffffff');
+    }
+  }
+  // Clear row 6, then write shop ticket there
+  await sheetsClear(6, col);
+  const cellVal = savedShop + (shopAddr ? ', '+shopAddr : '');
+  await sheetsSetValue(6, col, cellVal);
+  await sheetsSetBackground(6, col, '#00ff00');
+
+  // Store notes in localStorage so they render on the ticket
   shopVisits[savedTech] = { shop: savedShop, notes };
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-  closeShopModal();
-  render(); // update the board columns
-  // Re-render tech view immediately — covers both the owning tech and admin view
-  if (isTech && !viewingAll) {
-    renderTechView();
-  }
-  toast(`${savedTech} → ${savedShop}`);
+
+  toast(savedTech+' → '+savedShop);
+  loadData();
 }
 
-function clearShop(tech) {
+async function clearShop(tech) {
+  const sv = shopVisits[tech];
   delete shopVisits[tech];
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+  // Clear row 6 for this tech (where shop ticket lives)
+  const col = TECHS.indexOf(tech) + 1;
+  if (col >= 1) {
+    await sheetsClear(6, col);
+    // Shift remaining jobs back up
+    const techJobs = jobs.filter(j=>j.tech===tech&&j.row>6).sort((a,b)=>(a.row||0)-(b.row||0));
+    for (const j of techJobs) {
+      await sheetsSetValue(j.row - 1, j.col, j.job + (j.address ? ', ' + j.address : ''));
+      await sheetsSetBackground(j.row - 1, j.col, STATUS_TO_HEX[j.color] || '#ffffff');
+      await sheetsClear(j.row, j.col);
+      j.row = j.row - 1;
+    }
+  }
   render();
-  saveShopToSheet(tech, null).catch(() => {});
-  toast(`Shop removed from ${tech}`);
+  toast('Shop removed from ' + tech);
+  loadData();
 }
 
 function closeShopModal() {
@@ -1279,25 +1322,18 @@ function renderMapList(vj, legs, totalMin, totalMi) {
 async function renderTechView() {
   if (!curUser?.tech) return;
   const tech = curUser.tech;
-  // Reload shop visits fresh from sessionStorage each render
-  try { const s=localStorage.getItem('wrs_shops'); if(s) { const parsed=JSON.parse(s); Object.keys(parsed).forEach(k=>shopVisits[k]=parsed[k]); }} catch(e){}
-  const sv = shopVisits[tech];
-  console.log('renderTechView tech='+tech+' sv='+JSON.stringify(sv));
+  // Reload shop notes from localStorage
+  try { const s=localStorage.getItem('wrs_shops'); if(s){const p=JSON.parse(s);Object.keys(p).forEach(k=>shopVisits[k]=p[k]);}} catch(e){}
+  const sv = shopVisits[tech]; // may have notes to display
   const tc = TC[tech]||'#888';
   const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
   const tvTickets = document.getElementById('tvTickets');
   const mapSec = document.getElementById('mapsecTech');
 
-  // Get today's tickets sorted by row (column order)
+  // Get today's green tickets sorted by row (shop is row 6 = first)
   const myJobs = jobs.filter(j=>j.tech===tech&&j.color==='green').sort((a,b)=>(a.row||0)-(b.row||0));
 
-  // Geocode shop if needed
-  if (sv) {
-    const saddr = SHOP_LOCATIONS[sv.shop]?.address;
-    if (saddr && !geoCache[saddr]) await geocodeOne(saddr);
-  }
-
-  // Geocode any uncached job addresses
+  // Geocode any uncached addresses
   for (const j of myJobs) {
     if (j.address && !j.lat) {
       const c = await geocodeOne(j.address);
@@ -1306,24 +1342,19 @@ async function renderTechView() {
     }
   }
 
-  if (!myJobs.length && !sv) {
+  if (!myJobs.length) {
     mapSec.style.display='none';
     tvTickets.innerHTML=`<div style="text-align:center;padding:40px;color:var(--dm2);font-size:14px">NO TICKETS FOR TODAY</div>`;
     return;
   }
 
-  // Build ordered stops: shop first (if set), then jobs in column order
-  const shopAddr = sv ? (SHOP_LOCATIONS[sv.shop]?.address || '') : '';
-  const shopCoords = shopAddr ? geoCache[shopAddr] : null;
-  // Include shop card even if no geocoords — just won't appear on map
-  const shopStop = sv ? { label:'S', name:sv.shop, notes:sv.notes, addr:shopAddr, lat:shopCoords?.lat||null, lng:shopCoords?.lng||null, isShop:true } : null;
-  const jobStops = myJobs.filter(j=>j.lat&&j.lng);
-  const jobOffset = sv ? 1 : 0;
-  const allStops = [
-    ...(shopStop ? [shopStop] : []),
-    ...myJobs.map((j,i)=>({ label:String(i+1+jobOffset), name:j.job, addr:j.address, lat:j.lat||null, lng:j.lng||null, isShop:false }))
-  ];
-  // Map-eligible stops (have coords)
+  // Build stops — detect shop ticket by matching job name with known shop names
+  const SHOP_NAMES = Object.keys(SHOP_LOCATIONS);
+  const allStops = myJobs.map((j,i)=>{
+    const isShop = SHOP_NAMES.includes(j.job);
+    const notes = isShop && sv ? sv.notes : '';
+    return { label:String(i+1), name:j.job, notes, addr:j.address, lat:j.lat||null, lng:j.lng||null, isShop };
+  });
   const mapStops = allStops.filter(s=>s.lat&&s.lng);
 
   // Show map
@@ -1336,37 +1367,29 @@ async function renderTechView() {
   markerLayerTech = L.layerGroup().addTo(lmapTech);
   routeLayerTech  = L.layerGroup().addTo(lmapTech);
 
-  // Place markers in order (only stops with coords)
   const bounds=[];
-  mapStops.forEach((s,i)=>{
+  mapStops.forEach(s=>{
     const icon=L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,.6)">${s.label}</div>`,iconSize:[28,28],iconAnchor:[14,14]});
-    L.marker([s.lat,s.lng],{icon}).addTo(markerLayerTech)
-      .bindPopup(`<b>${s.label}. ${s.name}</b>${s.addr?'<br>'+s.addr:''}`);
+    L.marker([s.lat,s.lng],{icon}).addTo(markerLayerTech).bindPopup(`<b>${s.label}. ${s.name}</b>${s.addr?'<br>'+s.addr:''}`);
     bounds.push([s.lat,s.lng]);
   });
   if(bounds.length) setTimeout(()=>{lmapTech.fitBounds(bounds,{padding:[50,50],maxZoom:12});lmapTech.invalidateSize();},300);
   setTimeout(()=>lmapTech&&lmapTech.invalidateSize(),600);
 
-  // OSRM routing — use trip service for most efficient route, or route for ordered
   if(mapStops.length>=2){
     const wp=mapStops.map(s=>s.lng+','+s.lat).join(';');
-    // Use /route for ordered (column order), not trip optimization — keeps column order as intended
     fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson&steps=false`)
       .then(r=>r.json()).then(d=>{
         if(d.code==='Ok'&&d.routes&&d.routes[0]){
           const route=d.routes[0];
           L.polyline(route.geometry.coordinates.map(c=>[c[1],c[0]]),{color:tc,weight:4,opacity:.85}).addTo(routeLayerTech);
-          // Show total time + miles
           const totalMin=Math.round(route.duration/60);
           const totalMi=(route.distance/1609.34).toFixed(1);
           const legs=route.legs.map(l=>({min:Math.round(l.duration/60),mi:(l.distance/1609.34).toFixed(1)}));
-          // Re-render cards with leg times
           buildTechCards(allStops, legs, totalMin, totalMi, tc, dark);
         }
       }).catch(()=>{});
   }
-
-  // Initial card render (no leg times yet) — uses ALL stops including shop without coords
   buildTechCards(allStops, null, null, null, tc, dark);
 }
 
