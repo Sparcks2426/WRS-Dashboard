@@ -656,7 +656,10 @@ async function sheetsBatchGet(ranges) {
 async function sheetsGetFormatting(range) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat(backgroundColor)))))`;
   const r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-  if (!r.ok) throw new Error(`Sheets formatting failed: ${r.status}`);
+  if (!r.ok) {
+    const txt = await r.text().catch(()=>'');
+    throw new Error(`Sheets formatting failed: ${r.status} ${txt.substring(0,100)}`);
+  }
   return r.json();
 }
 
@@ -761,8 +764,8 @@ async function loadData() {
         const tech = TECHS[ci];
         if (tech) {
           const notes = v.replace('SHOPNOTE:', '');
-          if (!shopVisits[tech]) shopVisits[tech] = {};
-          shopVisits[tech].notes = notes;
+          // Always set notes — even if shopVisits[tech] doesn't exist yet
+          shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
         }
       }
     });
@@ -1357,13 +1360,12 @@ async function renderTechView() {
   });
 
 
-  // Geocode any uncached addresses
-  for (const j of myJobs) {
-    if (j.address && !j.lat) {
-      const c = await geocodeOne(j.address);
-      if (c) { j.lat=c.lat; j.lng=c.lng; }
-      if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1100));
-    }
+  // Geocode all uncached addresses sequentially — shop first
+  const toGeocode = myJobs.filter(j=>j.address&&!j.lat);
+  for (const j of toGeocode) {
+    const coords = await geocodeOne(j.address);
+    if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
+    if (!CONFIG.MAPS_API_KEY && toGeocode.indexOf(j)<toGeocode.length-1) await new Promise(r=>setTimeout(r,1100));
   }
 
   if (!myJobs.length) {
@@ -1376,7 +1378,8 @@ async function renderTechView() {
   const SHOP_NAMES = Object.keys(SHOP_LOCATIONS);
   const allStops = myJobs.map((j,i)=>{
     const isShop = SHOP_NAMES.includes(j.job);
-    const notes = isShop && sv ? sv.notes : '';
+    // Get notes from shopVisits — works even on tech's own device where sv.shop may not be set
+    const notes = isShop ? (shopVisits[tech]?.notes || '') : '';
     return { label:String(i+1), name:j.job, notes, addr:j.address, lat:j.lat||null, lng:j.lng||null, isShop };
   });
   const mapStops = allStops.filter(s=>s.lat&&s.lng);
