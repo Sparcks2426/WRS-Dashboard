@@ -304,7 +304,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
           <span class="maptag">LIVE</span>
         </div>
       </div>
-      <div class="mapwrap"><div class="mapbox" style="width:100%;position:relative;height:clamp(300px,45vh,480px)"><div id="lmapTech" style="position:absolute;inset:0"></div></div></div>
+      <div style="width:100%;height:clamp(300px,45vh,480px);position:relative;background:var(--bg);border-radius:0 0 var(--r12) var(--r12);overflow:hidden"><div id="lmapTech" style="position:absolute;inset:0;width:100%;height:100%"></div></div>
     </div>
     <div class="tv-tickets" id="tvTickets"></div>
   </div>
@@ -501,6 +501,7 @@ let shopModalTech = null, shopModalSelected = null;
 
   // Load saved shop visits from sessionStorage
   try { shopVisits = JSON.parse(sessionStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
+  console.log('Loaded shopVisits:', JSON.stringify(shopVisits));
 
   // Try auto-login from session
   const saved = sessionStorage.getItem('wrs_user');
@@ -1060,8 +1061,9 @@ function confirmShop() {
   sessionStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
   closeShopModal();
   render();
-  // If the current user IS this tech, re-render their home view too
-  if (isTech && curUser?.tech === shopModalTech && !viewingAll) renderTechView();
+  // Always re-render tech view if this tech is viewing their home
+  if (isTech && !viewingAll) renderTechView();
+  else if (!isTech) render(); // admins see it on the board
   toast(`${shopModalTech} → ${shopModalSelected}`);
 }
 
@@ -1183,7 +1185,12 @@ function updateMap() {
   });
   document.getElementById('mfpills').innerHTML=pillH;
 
-  const vj=mapTech==='all'?tj:tj.filter(j=>j.tech===mapTech);
+  // Sort: by TECHS column order, then by row within each tech column
+  const sortJobs=arr=>arr.slice().sort((a,b)=>{
+    const ti=TECHS.indexOf(a.tech)-TECHS.indexOf(b.tech);
+    return ti!==0?ti:(a.row||0)-(b.row||0);
+  });
+  const vj=sortJobs(mapTech==='all'?tj:tj.filter(j=>j.tech===mapTech));
   markerLayer.clearLayers(); routeLayer.clearLayers(); markersArr=[];
   const bounds=[], tCtr={};
   vj.forEach((j,i)=>{
@@ -1242,8 +1249,9 @@ async function renderTechView() {
   if (!curUser?.tech) return;
   const tech = curUser.tech;
   // Reload shop visits fresh from sessionStorage each render
-  try { const s=sessionStorage.getItem('wrs_shops'); if(s) Object.assign(shopVisits,JSON.parse(s)); } catch(e){}
+  try { const s=sessionStorage.getItem('wrs_shops'); if(s) { const parsed=JSON.parse(s); Object.keys(parsed).forEach(k=>shopVisits[k]=parsed[k]); }} catch(e){}
   const sv = shopVisits[tech];
+  console.log('renderTechView tech='+tech+' sv='+JSON.stringify(sv));
   const tc = TC[tech]||'#888';
   const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
   const tvTickets = document.getElementById('tvTickets');
@@ -1286,6 +1294,7 @@ async function renderTechView() {
   mapSec.style.display='';
   document.getElementById('tvMapTitle').textContent = `${tech}'s Route — ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
   if(lmapTech){lmapTech.remove();lmapTech=null;}
+  setTimeout(()=>{ if(lmapTech) lmapTech.invalidateSize(); }, 200);
   lmapTech = L.map('lmapTech',{zoomControl:true}).setView([26.5,-80.2],10);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(lmapTech);
   markerLayerTech = L.layerGroup().addTo(lmapTech);
