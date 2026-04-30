@@ -690,32 +690,6 @@ async function sheetsSetValue(row, col, value) {
   });
 }
 
-async function saveShopToSheet(tech, data) {
-  const col = TECHS.indexOf(tech) + 1;
-  if (col < 1) return;
-  const val = data ? JSON.stringify(data) : '';
-  await sheetsSetValue(5, col, val);
-}
-
-async function loadShopsFromSheet() {
-  try {
-    const resp = await sheetsGet('Sheet1!A5:K5');
-    const row = resp.values?.[0] || [];
-    const loaded = {};
-    row.forEach((cell, i) => {
-      if (cell && cell.trim()) {
-        try { loaded[TECHS[i]] = JSON.parse(cell); } catch(e) {}
-      }
-    });
-    // Merge into shopVisits
-    Object.keys(loaded).forEach(k => shopVisits[k] = loaded[k]);
-    // Only ADD from sheet, don't delete local entries (in case sheet save failed)
-    // Clear shops only when explicitly set to empty string in sheet
-    TECHS.forEach(t => { if (row[TECHS.indexOf(t)] === '') delete shopVisits[t]; });
-    return loaded;
-  } catch(e) { return {}; }
-}
-
 async function sheetsClear(row, col) {
   const range = `Sheet1!${colLetter(col)}${row}`;
   await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
@@ -753,42 +727,50 @@ function setSyncState(state) {
 async function loadData() {
   setSyncState('syncing');
   try {
-    // Fetch values + formatting for jobs in one go
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A2:K23`);
+    // ── Fetch jobs + vendor notes (rows 6-23), NO shop rows ──
+    // Range A6:K23 → sheetData index 0 = row 6
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
-    // Row 2 (index 0): shop tickets — read data here, pushed into jobs[] after jobs=[] below
-    const row2data = sheetData[0]?.values || [];
+    // ── Fetch shop rows 25-26 separately (values only, no formatting needed for row 26) ──
+    // Row 25 = shop ticket (green cell), Row 26 = SHOPNOTE text
+    const shopFmt  = await sheetsGetFormatting(`Sheet1!A25:K25`);
+    const shopData = shopFmt.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
+    const noteResp = await sheetsGet(`Sheet1!A26:K26`);
+    const noteRow  = noteResp.values?.[0] || [];
 
-    // Row 3 (index 1): shop notes per tech
-    const row3data = sheetData[1]?.values || [];
-    row3data.forEach((cell, ci) => {
+    // ── Read shop tickets from row 25 ──
+    jobs = [];
+    shopData.forEach((cell, ci) => {
       const v = cell?.userEnteredValue?.stringValue || '';
-      if (v.startsWith('SHOPNOTE:')) {
+      const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
+      const hex   = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
+      if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
+        const parsed = parseJob(v);
+        const j = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: parsed.addr, color: 'green', row: 25, col: ci+1, lat: null, lng: null };
+        if (parsed.addr && geoCache[parsed.addr]) { j.lat=geoCache[parsed.addr].lat; j.lng=geoCache[parsed.addr].lng; }
+        jobs.push(j);
+        // Ensure shopVisits reflects what is in the sheet
+        if (!shopVisits[TECHS[ci]]?.shop) {
+          shopVisits[TECHS[ci]] = Object.assign(shopVisits[TECHS[ci]]||{}, { shop: parsed.name });
+        }
+      }
+    });
+
+    // ── Read shop notes from row 26 ──
+    noteRow.forEach((v, ci) => {
+      if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
         const tech = TECHS[ci];
         if (tech) {
           const notes = v.replace('SHOPNOTE:', '');
-          // Always set notes — even if shopVisits[tech] doesn't exist yet
           shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
         }
       }
     });
 
-    jobs = [];
-    // Re-add row 2 shop tickets (read above, cleared by jobs=[])
-    row2data.forEach((cell, ci) => {
-      const v = cell?.userEnteredValue?.stringValue || '';
-      const bgRaw2 = cell?.userEnteredFormat?.backgroundColor || null;
-      const hex2 = bgRaw2 ? rgbToHex(bgRaw2) : '#ffffff';
-      if (v && v.trim() && (HEX_TO_STATUS[hex2]||'none') === 'green') {
-        const parsed = parseJob(v);
-        const j2 = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: parsed.addr, color: 'green', row: 2, col: ci+1, lat: null, lng: null };
-        if (parsed.addr && geoCache[parsed.addr]) { j2.lat=geoCache[parsed.addr].lat; j2.lng=geoCache[parsed.addr].lng; }
-        jobs.push(j2);
-      }
-    });
+    // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
     let id = 1;
-    for (let r = 4; r < 17; r++) {  // rows 6-18 (index 4-16, range starts at row 2)
+    for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
@@ -798,8 +780,7 @@ async function loadData() {
         const hex = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
         const status = HEX_TO_STATUS[hex] || 'none';
         const parsed = parseJob(val);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+2, col: c+1, lat: null, lng: null };
-        // Attach cached geocode if available
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null };
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
           job.lat = geoCache[parsed.addr].lat;
           job.lng = geoCache[parsed.addr].lng;
@@ -808,14 +789,14 @@ async function loadData() {
       }
     }
 
-    // Vendor notes (rows 19-23)
+    // ── Vendor notes (rows 19-23, sheetData index 13-17) ──
     vendorNotes = [];
-    for (let r = 17; r < 22; r++) {
+    for (let r = 13; r < 18; r++) {
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
         const val = cell?.userEnteredValue?.stringValue || '';
-        if (val && val.trim()) vendorNotes.push({ row: r+2, col: c+1, tech: TECHS[c]||'', text: val.trim() });
+        if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
       }
     }
 
@@ -823,7 +804,6 @@ async function loadData() {
     document.getElementById('loadEl').style.display = 'none';
     document.getElementById('mainarea').style.display = 'flex';
 
-    // Shop visits loaded from localStorage (written as real tickets to sheet)
     if (isTech && !viewingAll) renderTechView();
     else { render(); initMap(); updateMap(); }
     renderNotes();
@@ -1140,14 +1120,14 @@ async function confirmShop() {
   const col = TECHS.indexOf(savedTech) + 1;
   if (col < 1) { toast('Tech not found'); return; }
 
-  // Write shop ticket to row 2 (safe empty row above jobs)
-  await sheetsClear(2, col);
+  // Write shop ticket to row 25 (below all job/vendor rows, no conflicts)
+  await sheetsClear(25, col);
   const cellVal = savedShop + (shopAddr ? ', '+shopAddr : '');
-  await sheetsSetValue(2, col, cellVal);
-  await sheetsSetBackground(2, col, '#00ff00');
+  await sheetsSetValue(25, col, cellVal);
+  await sheetsSetBackground(25, col, '#00ff00');
 
-  // Store notes in sheet row 5 so tech's device reads them on sync
-  await sheetsSetValue(3, col, notes ? 'SHOPNOTE:'+notes : '').catch(()=>{});
+  // Store notes in row 26 so all devices read them on sync
+  await sheetsSetValue(26, col, notes ? 'SHOPNOTE:'+notes : '').catch(()=>{});
   // Also cache locally
   shopVisits[savedTech] = { shop: savedShop, notes };
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
@@ -1161,9 +1141,9 @@ async function clearShop(tech) {
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
   const col = TECHS.indexOf(tech) + 1;
   if (col >= 1) {
-    // Clear shop note from row 3 and shop ticket from row 2
-    await sheetsSetValue(3, col, '').catch(()=>{});
-    await sheetsClear(2, col);
+    // Clear shop note from row 26 and shop ticket from row 25
+    await sheetsSetValue(26, col, '').catch(()=>{});
+    await sheetsClear(25, col);
 
   }
   render();
