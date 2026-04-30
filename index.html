@@ -747,12 +747,12 @@ async function loadData() {
   setSyncState('syncing');
   try {
     // Fetch values + formatting for jobs in one go
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A5:K23`);
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A2:K23`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
-    // Row 5 (index 0): shop notes per tech
-    const row5data = sheetData[0]?.values || [];
-    row5data.forEach((cell, ci) => {
+    // Row 3 (index 1): shop notes per tech
+    const row3data = sheetData[1]?.values || [];
+    row3data.forEach((cell, ci) => {
       const v = cell?.userEnteredValue?.stringValue || '';
       if (v.startsWith('SHOPNOTE:')) {
         const tech = TECHS[ci];
@@ -766,7 +766,7 @@ async function loadData() {
 
     jobs = [];
     let id = 1;
-    for (let r = 1; r < 14; r++) {  // rows 6-18 (index 1-13 since we now start at row 5)
+    for (let r = 4; r < 17; r++) {  // rows 6-18 (index 4-16, range starts at row 2)
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
@@ -776,7 +776,7 @@ async function loadData() {
         const hex = rgbToHex(bgRaw);
         const status = HEX_TO_STATUS[hex] || 'none';
         const parsed = parseJob(val);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+5, col: c+1, lat: null, lng: null };
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+2, col: c+1, lat: null, lng: null };
         // Attach cached geocode if available
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
           job.lat = geoCache[parsed.addr].lat;
@@ -788,12 +788,12 @@ async function loadData() {
 
     // Vendor notes (rows 19-23)
     vendorNotes = [];
-    for (let r = 14; r < 19; r++) {
+    for (let r = 17; r < 22; r++) {
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
         const val = cell?.userEnteredValue?.stringValue || '';
-        if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
+        if (val && val.trim()) vendorNotes.push({ row: r+2, col: c+1, tech: TECHS[c]||'', text: val.trim() });
       }
     }
 
@@ -1118,22 +1118,14 @@ async function confirmShop() {
   const col = TECHS.indexOf(savedTech) + 1;
   if (col < 1) { toast('Tech not found'); return; }
 
-  // Shift existing jobs in this tech's column down by one row (18→skip, 17→18, etc)
-  const techJobs = jobs.filter(j=>j.tech===savedTech&&j.color!=='none').sort((a,b)=>(b.row||0)-(a.row||0));
-  for (const j of techJobs) {
-    if (j.row < 18) {
-      await sheetsSetValue(j.row+1, j.col, j.job+(j.address?', '+j.address:''));
-      await sheetsSetBackground(j.row+1, j.col, STATUS_TO_HEX[j.color]||'#ffffff');
-    }
-  }
-  // Clear row 6, then write shop ticket there
-  await sheetsClear(6, col);
+  // Write shop ticket to row 2 (safe empty row above jobs)
+  await sheetsClear(2, col);
   const cellVal = savedShop + (shopAddr ? ', '+shopAddr : '');
-  await sheetsSetValue(6, col, cellVal);
-  await sheetsSetBackground(6, col, '#00ff00');
+  await sheetsSetValue(2, col, cellVal);
+  await sheetsSetBackground(2, col, '#00ff00');
 
   // Store notes in sheet row 5 so tech's device reads them on sync
-  await sheetsSetValue(5, col, notes ? 'SHOPNOTE:'+notes : '').catch(()=>{});
+  await sheetsSetValue(3, col, notes ? 'SHOPNOTE:'+notes : '').catch(()=>{});
   // Also cache locally
   shopVisits[savedTech] = { shop: savedShop, notes };
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
@@ -1147,18 +1139,10 @@ async function clearShop(tech) {
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
   const col = TECHS.indexOf(tech) + 1;
   if (col >= 1) {
-    // Clear shop note from row 5
-    await sheetsSetValue(5, col, '').catch(()=>{});
-    // Clear row 6 shop ticket
-    await sheetsClear(6, col);
-    // Shift remaining jobs back up
-    const techJobs = jobs.filter(j=>j.tech===tech&&j.row>6).sort((a,b)=>(a.row||0)-(b.row||0));
-    for (const j of techJobs) {
-      await sheetsSetValue(j.row - 1, j.col, j.job + (j.address ? ', ' + j.address : ''));
-      await sheetsSetBackground(j.row - 1, j.col, STATUS_TO_HEX[j.color] || '#ffffff');
-      await sheetsClear(j.row, j.col);
-      j.row = j.row - 1;
-    }
+    // Clear shop note from row 3 and shop ticket from row 2
+    await sheetsSetValue(3, col, '').catch(()=>{});
+    await sheetsClear(2, col);
+
   }
   render();
   toast('Shop removed from ' + tech);
@@ -1349,9 +1333,14 @@ async function renderTechView() {
 
   // Get today's green tickets sorted by row (shop is row 6 = first)
   const allTechJobs = jobs.filter(j=>j.tech===tech);
-  const myJobs = allTechJobs.filter(j=>j.color==='green').sort((a,b)=>(a.row||0)-(b.row||0));
-  // Debug: show what we found (remove after confirming)
-  toast('Tech:'+tech+' total:'+allTechJobs.length+' green:'+myJobs.length+(myJobs[0]?' first:'+myJobs[0].job:''));
+  const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
+  const myJobs = allTechJobs.filter(j=>j.color==='green').sort((a,b)=>{
+    const aShop = SHOP_NAMES_SET.has(a.job)?0:1;
+    const bShop = SHOP_NAMES_SET.has(b.job)?0:1;
+    if(aShop!==bShop) return aShop-bShop; // shop always first
+    return (a.row||0)-(b.row||0);
+  });
+
 
   // Geocode any uncached addresses
   for (const j of myJobs) {
