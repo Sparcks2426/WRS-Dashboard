@@ -476,8 +476,8 @@ const geoCache = {};       // address → {lat,lng}  (session cache)
 
 // Shop state: { tech: { shop, notes } }
 const SHOP_LOCATIONS = {
-  'North Shop': { address: '123 North Shop Rd, Deerfield Beach, FL' },
-  'South Shop':  { address: '456 South Shop Blvd, Miami, FL' },
+  'North Shop': { address: '111 Reed Rd, West Palm Beach, FL 33403' },
+  'South Shop':  { address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
 };
 let shopVisits = {}; // techName → { shop, notes }
 let shopModalTech = null, shopModalSelected = null;
@@ -694,8 +694,9 @@ async function loadShopsFromSheet() {
     });
     // Merge into shopVisits
     Object.keys(loaded).forEach(k => shopVisits[k] = loaded[k]);
-    // Clear any techs no longer in sheet
-    TECHS.forEach(t => { if (loaded[t] === undefined) delete shopVisits[t]; });
+    // Only ADD from sheet, don't delete local entries (in case sheet save failed)
+    // Clear shops only when explicitly set to empty string in sheet
+    TECHS.forEach(t => { if (row[TECHS.indexOf(t)] === '') delete shopVisits[t]; });
     return loaded;
   } catch(e) { return {}; }
 }
@@ -1312,13 +1313,18 @@ async function renderTechView() {
   }
 
   // Build ordered stops: shop first (if set), then jobs in column order
-  const shopCoords = sv ? geoCache[SHOP_LOCATIONS[sv.shop]?.address] : null;
+  const shopAddr = sv ? (SHOP_LOCATIONS[sv.shop]?.address || '') : '';
+  const shopCoords = shopAddr ? geoCache[shopAddr] : null;
+  // Include shop card even if no geocoords — just won't appear on map
+  const shopStop = sv ? { label:'S', name:sv.shop, notes:sv.notes, addr:shopAddr, lat:shopCoords?.lat||null, lng:shopCoords?.lng||null, isShop:true } : null;
   const jobStops = myJobs.filter(j=>j.lat&&j.lng);
-  // All waypoints in order: shop → jobs
+  const jobOffset = sv ? 1 : 0;
   const allStops = [
-    ...(shopCoords ? [{ label:'S', name:sv.shop, notes:sv.notes, addr:SHOP_LOCATIONS[sv.shop]?.address, lat:shopCoords.lat, lng:shopCoords.lng, isShop:true }] : []),
-    ...jobStops.map((j,i)=>({ label:String(i+1+(shopCoords?1:0)), name:j.job, addr:j.address, lat:j.lat, lng:j.lng, isShop:false }))
+    ...(shopStop ? [shopStop] : []),
+    ...myJobs.map((j,i)=>({ label:String(i+1+jobOffset), name:j.job, addr:j.address, lat:j.lat||null, lng:j.lng||null, isShop:false }))
   ];
+  // Map-eligible stops (have coords)
+  const mapStops = allStops.filter(s=>s.lat&&s.lng);
 
   // Show map
   mapSec.style.display='';
@@ -1330,9 +1336,9 @@ async function renderTechView() {
   markerLayerTech = L.layerGroup().addTo(lmapTech);
   routeLayerTech  = L.layerGroup().addTo(lmapTech);
 
-  // Place markers in order
+  // Place markers in order (only stops with coords)
   const bounds=[];
-  allStops.forEach((s,i)=>{
+  mapStops.forEach((s,i)=>{
     const icon=L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,.6)">${s.label}</div>`,iconSize:[28,28],iconAnchor:[14,14]});
     L.marker([s.lat,s.lng],{icon}).addTo(markerLayerTech)
       .bindPopup(`<b>${s.label}. ${s.name}</b>${s.addr?'<br>'+s.addr:''}`);
@@ -1342,8 +1348,8 @@ async function renderTechView() {
   setTimeout(()=>lmapTech&&lmapTech.invalidateSize(),600);
 
   // OSRM routing — use trip service for most efficient route, or route for ordered
-  if(allStops.length>=2){
-    const wp=allStops.map(s=>s.lng+','+s.lat).join(';');
+  if(mapStops.length>=2){
+    const wp=mapStops.map(s=>s.lng+','+s.lat).join(';');
     // Use /route for ordered (column order), not trip optimization — keeps column order as intended
     fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson&steps=false`)
       .then(r=>r.json()).then(d=>{
@@ -1360,7 +1366,7 @@ async function renderTechView() {
       }).catch(()=>{});
   }
 
-  // Initial card render (no leg times yet)
+  // Initial card render (no leg times yet) — uses ALL stops including shop without coords
   buildTechCards(allStops, null, null, null, tc, dark);
 }
 
@@ -1381,8 +1387,8 @@ function buildTechCards(allStops, legs, totalMin, totalMi, tc, dark) {
       <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'};flex-shrink:0">${s.label}</div>
       <div style="flex:1;min-width:0">
         <div class="tv-job">${s.name}</div>
-        ${s.isShop&&s.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:4px;line-height:1.5;font-weight:500">${s.notes.replace(/</g,'&lt;')}</div>`:''}
         ${s.addr?`<div class="tv-addr" style="margin-top:3px">📍 ${s.addr}</div>`:''}
+        ${s.isShop&&s.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:6px;line-height:1.5;font-weight:500">${s.notes.replace(/</g,'&lt;')}</div>`:''}
         ${leg?`<div style="font-size:11px;color:var(--gr);margin-top:4px;font-weight:600">→ Next stop: ${leg.min} min · ${leg.mi} mi</div>`:''}
       </div>
     </div>`;
