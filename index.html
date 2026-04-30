@@ -304,7 +304,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
           <span class="maptag">LIVE</span>
         </div>
       </div>
-      <div class="mapwrap"><div class="mapbox" style="width:100%"><div id="lmapTech" style="position:absolute;inset:0"></div></div></div>
+      <div class="mapwrap"><div class="mapbox" style="width:100%;position:relative;height:clamp(300px,45vh,480px)"><div id="lmapTech" style="position:absolute;inset:0"></div></div></div>
     </div>
     <div class="tv-tickets" id="tvTickets"></div>
   </div>
@@ -1241,85 +1241,114 @@ function renderMapList(vj, legs, totalMin, totalMi) {
 async function renderTechView() {
   if (!curUser?.tech) return;
   const tech = curUser.tech;
-  const myJobs = jobs.filter(j=>j.tech===tech&&j.color==='green').sort((a,b)=>(a.row||0)-(b.row||0));
   // Reload shop visits fresh from sessionStorage each render
   try { const s=sessionStorage.getItem('wrs_shops'); if(s) Object.assign(shopVisits,JSON.parse(s)); } catch(e){}
   const sv = shopVisits[tech];
-  const tvTickets = document.getElementById('tvTickets');
   const tc = TC[tech]||'#888';
   const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+  const tvTickets = document.getElementById('tvTickets');
+  const mapSec = document.getElementById('mapsecTech');
 
-  // Geocode shop address if needed so it appears on map
+  // Get today's tickets sorted by row (column order)
+  const myJobs = jobs.filter(j=>j.tech===tech&&j.color==='green').sort((a,b)=>(a.row||0)-(b.row||0));
+
+  // Geocode shop if needed
   if (sv) {
     const saddr = SHOP_LOCATIONS[sv.shop]?.address;
-    if (saddr && !geoCache[saddr]) { await geocodeOne(saddr); }
+    if (saddr && !geoCache[saddr]) await geocodeOne(saddr);
+  }
+
+  // Geocode any uncached job addresses
+  for (const j of myJobs) {
+    if (j.address && !j.lat) {
+      const c = await geocodeOne(j.address);
+      if (c) { j.lat=c.lat; j.lng=c.lng; }
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1100));
+    }
   }
 
   if (!myJobs.length && !sv) {
-    document.getElementById('mapsecTech').style.display='none';
+    mapSec.style.display='none';
     tvTickets.innerHTML=`<div style="text-align:center;padding:40px;color:var(--dm2);font-size:14px">NO TICKETS FOR TODAY</div>`;
     return;
   }
 
-  // Map
-  document.getElementById('mapsecTech').style.display='';
+  // Build ordered stops: shop first (if set), then jobs in column order
+  const shopCoords = sv ? geoCache[SHOP_LOCATIONS[sv.shop]?.address] : null;
+  const jobStops = myJobs.filter(j=>j.lat&&j.lng);
+  // All waypoints in order: shop → jobs
+  const allStops = [
+    ...(shopCoords ? [{ label:'S', name:sv.shop, notes:sv.notes, addr:SHOP_LOCATIONS[sv.shop]?.address, lat:shopCoords.lat, lng:shopCoords.lng, isShop:true }] : []),
+    ...jobStops.map((j,i)=>({ label:String(i+1+(shopCoords?1:0)), name:j.job, addr:j.address, lat:j.lat, lng:j.lng, isShop:false }))
+  ];
+
+  // Show map
+  mapSec.style.display='';
   document.getElementById('tvMapTitle').textContent = `${tech}'s Route — ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
   if(lmapTech){lmapTech.remove();lmapTech=null;}
-  const techMapEl = document.getElementById('lmapTech');
-  techMapEl.style.position='absolute'; techMapEl.style.inset='0';
-  lmapTech = L.map('lmapTech',{zoomControl:true}).setView([26.5,-80.2],9);
+  lmapTech = L.map('lmapTech',{zoomControl:true}).setView([26.5,-80.2],10);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(lmapTech);
   markerLayerTech = L.layerGroup().addTo(lmapTech);
   routeLayerTech  = L.layerGroup().addTo(lmapTech);
 
-  const withCoords=myJobs.filter(j=>j.lat&&j.lng), bounds=[];
-  // Add shop to map if set
-  let shopCoords = null;
-  if (sv) {
-    const saddr = SHOP_LOCATIONS[sv.shop]?.address;
-    if (saddr && geoCache[saddr]) { shopCoords = geoCache[saddr]; bounds.push([shopCoords.lat, shopCoords.lng]); }
-  }
-  withCoords.forEach((j,i)=>{
-    const icon=L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,.6)">${i+1+(sv?1:0)}</div>`,iconSize:[28,28],iconAnchor:[14,14]});
-    L.marker([j.lat,j.lng],{icon}).addTo(markerLayerTech).bindPopup(`<b>#${i+1+(sv?1:0)} — ${j.job}</b><br>${j.address}`);
-    bounds.push([j.lat,j.lng]);
+  // Place markers in order
+  const bounds=[];
+  allStops.forEach((s,i)=>{
+    const icon=L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,.6)">${s.label}</div>`,iconSize:[28,28],iconAnchor:[14,14]});
+    L.marker([s.lat,s.lng],{icon}).addTo(markerLayerTech)
+      .bindPopup(`<b>${s.label}. ${s.name}</b>${s.addr?'<br>'+s.addr:''}`);
+    bounds.push([s.lat,s.lng]);
   });
-  if(shopCoords){
-    const icon=L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,.6)">S</div>`,iconSize:[28,28],iconAnchor:[14,14]});
-    L.marker([shopCoords.lat,shopCoords.lng],{icon}).addTo(markerLayerTech).bindPopup(`<b>${sv.shop}</b>`);
-  }
-  if(bounds.length) setTimeout(()=>{lmapTech.fitBounds(bounds,{padding:[80,80],maxZoom:11});lmapTech.invalidateSize();},350);
-  const allCoords = shopCoords ? [[shopCoords.lat,shopCoords.lng],...withCoords.map(j=>[j.lat,j.lng])] : withCoords.map(j=>[j.lat,j.lng]);
-  if(allCoords.length>=2){
-    const wp=allCoords.map(c=>c[1]+','+c[0]).join(';');
-    fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson`)
+  if(bounds.length) setTimeout(()=>{lmapTech.fitBounds(bounds,{padding:[50,50],maxZoom:12});lmapTech.invalidateSize();},300);
+  setTimeout(()=>lmapTech&&lmapTech.invalidateSize(),600);
+
+  // OSRM routing — use trip service for most efficient route, or route for ordered
+  if(allStops.length>=2){
+    const wp=allStops.map(s=>s.lng+','+s.lat).join(';');
+    // Use /route for ordered (column order), not trip optimization — keeps column order as intended
+    fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson&steps=false`)
       .then(r=>r.json()).then(d=>{
-        if(d.code==='Ok'&&d.routes[0])
-          L.polyline(d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]),{color:tc,weight:4,opacity:.85}).addTo(routeLayerTech);
+        if(d.code==='Ok'&&d.routes&&d.routes[0]){
+          const route=d.routes[0];
+          L.polyline(route.geometry.coordinates.map(c=>[c[1],c[0]]),{color:tc,weight:4,opacity:.85}).addTo(routeLayerTech);
+          // Show total time + miles
+          const totalMin=Math.round(route.duration/60);
+          const totalMi=(route.distance/1609.34).toFixed(1);
+          const legs=route.legs.map(l=>({min:Math.round(l.duration/60),mi:(l.distance/1609.34).toFixed(1)}));
+          // Re-render cards with leg times
+          buildTechCards(allStops, legs, totalMin, totalMi, tc, dark);
+        }
       }).catch(()=>{});
   }
-  setTimeout(()=>lmapTech&&lmapTech.invalidateSize(),500);
 
-  // Ticket cards — shop first
-  let cardsH = '';
-  if (sv) {
-    const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
-    cardsH += `<div class="tv-card" style="border-left:3px solid ${tc};background:rgba(255,255,255,.03)">
-      <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'}">S</div>
-      <div style="flex:1">
-        <div class="tv-job">${sv.shop}</div>
-        ${sv.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:4px;line-height:1.5;font-weight:500">${sv.notes.replace(/</g,'&lt;')}</div>`:''}
-        ${addr?`<div class="tv-addr" style="margin-top:4px">📍 ${addr}</div>`:''}
-      </div>
+  // Initial card render (no leg times yet)
+  buildTechCards(allStops, null, null, null, tc, dark);
+}
+
+function buildTechCards(allStops, legs, totalMin, totalMi, tc, dark) {
+  const tvTickets = document.getElementById('tvTickets');
+  let h = '';
+  // Route summary bar
+  if(totalMin){
+    h+=`<div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:10px 14px;margin-bottom:10px;display:flex;gap:16px;font-size:13px;font-weight:600">
+      <span style="color:var(--gr)">⏱ ${totalMin} min total</span>
+      <span style="color:var(--bl)">🚗 ${totalMi} mi total</span>
+      <span style="color:var(--dm2)">${allStops.length} stops</span>
     </div>`;
   }
-  myJobs.forEach((j,i)=>{
-    cardsH += `<div class="tv-card">
-      <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'}">${i+1+(sv?1:0)}</div>
-      <div><div class="tv-job">${j.job}</div><div class="tv-addr">${j.address||''}</div></div>
+  allStops.forEach((s,i)=>{
+    const leg=legs?.[i];
+    h+=`<div class="tv-card" style="${s.isShop?'border-left:3px solid '+tc+';background:rgba(255,255,255,.03)':''}">
+      <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'};flex-shrink:0">${s.label}</div>
+      <div style="flex:1;min-width:0">
+        <div class="tv-job">${s.name}</div>
+        ${s.isShop&&s.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:4px;line-height:1.5;font-weight:500">${s.notes.replace(/</g,'&lt;')}</div>`:''}
+        ${s.addr?`<div class="tv-addr" style="margin-top:3px">📍 ${s.addr}</div>`:''}
+        ${leg?`<div style="font-size:11px;color:var(--gr);margin-top:4px;font-weight:600">→ Next stop: ${leg.min} min · ${leg.mi} mi</div>`:''}
+      </div>
     </div>`;
   });
-  tvTickets.innerHTML = cardsH;
+  tvTickets.innerHTML = h;
 }
 
 // ════════════════════════════════════════════
