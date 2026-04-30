@@ -158,8 +158,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .ainp{flex:1;background:var(--sf);border:1px solid var(--bd2);border-radius:var(--r4);padding:6px 10px;color:var(--tx);font-family:'Inter',sans-serif;font-size:12px;outline:none;transition:border-color .15s}
 .ainp:focus{border-color:var(--ac)}
 .ainp::placeholder{color:var(--dm)}
-.abtn{border:none;border-radius:var(--r4);font-size:16px;width:28px;cursor:pointer;font-weight:800;transition:all .15s}
-.abtn:hover{background:#0d9668}
+.abtn{border:none;border-radius:var(--r4);font-size:18px;width:30px;height:30px;cursor:pointer;font-weight:300;transition:all .15s;display:flex;align-items:center;justify-content:center;line-height:1}
+.abtn:hover{filter:brightness(1.3)}
 
 /* ── STATUS DROPDOWN ── */
 .ddo{display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.3)}
@@ -273,6 +273,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     <!-- Toolbar -->
     <div class="toolbar">
       <input type="text" class="sbox" id="sbox" placeholder="Search jobs or techs...">
+      <button id="fullSchedBtn" onclick="backToTechView()" style="display:none;background:var(--ac);border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:13px;font-weight:700;padding:8px 14px;cursor:pointer;white-space:nowrap">← My View</button>
       <div class="legend" id="legend"></div>
     </div>
 
@@ -475,8 +476,8 @@ const geoCache = {};       // address → {lat,lng}  (session cache)
 
 // Shop state: { tech: { shop, notes } }
 const SHOP_LOCATIONS = {
-  'North Shop': { address: '111 Reed Rd, West Palm Beach, FL 33403' },
-  'South Shop':  { address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
+  'North Shop': { address: '123 North Shop Rd, Deerfield Beach, FL' },
+  'South Shop':  { address: '456 South Shop Blvd, Miami, FL' },
 };
 let shopVisits = {}; // techName → { shop, notes }
 let shopModalTech = null, shopModalSelected = null;
@@ -606,7 +607,13 @@ function showAdminView() {
   viewingAll = true;
   document.getElementById('adminView').style.display = 'block';
   document.getElementById('techView').style.display  = 'none';
+  const fsb = document.getElementById('fullSchedBtn');
+  if (fsb) fsb.style.display = isTech ? 'block' : 'none';
   render(); initMap(); updateMap();
+}
+// Toolbar button for tech to see full schedule (mobile)
+function openFullSchedule() {
+  showAdminView();
 }
 
 function backToTechView() {
@@ -829,7 +836,8 @@ function getFiltered() {
 function rBoard() {
   const fj = getFiltered();
   let h = '';
-  TECHS.forEach(tech => {
+  const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : TECHS;
+  visibleTechs.forEach(tech => {
     const tj = fj.filter(j => j.tech===tech);
     if (search && !tj.length) return;
     const tc = TC[tech]||'#888';
@@ -837,7 +845,7 @@ function rBoard() {
     // Header: add row at TOP, then jobs
     h += `<div class="tcol">`;
     // Add row at top
-    if (canWrite) h += `<div class="arow"><input class="ainp" placeholder="New ticket…" id="ai_${tech}" onkeydown="if(event.key==='Enter')addJ('${tech}')"><button class="abtn" style="background:${tc};color:${['#FFEA00','#39FF14','#FF8C00','#FF1A1A'].includes(tc)?'#000':'#fff'}" onclick="addJ('${tech}')">+</button></div>`;
+    if (canWrite) h += `<div class="arow"><input class="ainp" placeholder="New ticket…" id="ai_${tech}" onkeydown="if(event.key==='Enter')addJ('${tech}')"><button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJ('${tech}')">+</button></div>`;
     h += `<div class="thdr">
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
       ${sv ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
