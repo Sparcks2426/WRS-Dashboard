@@ -747,12 +747,26 @@ async function loadData() {
   setSyncState('syncing');
   try {
     // Fetch values + formatting for jobs in one go
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A5:K23`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
+
+    // Row 5 (index 0): shop notes per tech
+    const row5data = sheetData[0]?.values || [];
+    row5data.forEach((cell, ci) => {
+      const v = cell?.userEnteredValue?.stringValue || '';
+      if (v.startsWith('SHOPNOTE:')) {
+        const tech = TECHS[ci];
+        if (tech) {
+          const notes = v.replace('SHOPNOTE:', '');
+          if (!shopVisits[tech]) shopVisits[tech] = {};
+          shopVisits[tech].notes = notes;
+        }
+      }
+    });
 
     jobs = [];
     let id = 1;
-    for (let r = 0; r < 13; r++) {  // rows 6-18
+    for (let r = 1; r < 14; r++) {  // rows 6-18 (index 1-13 since we now start at row 5)
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
@@ -762,7 +776,7 @@ async function loadData() {
         const hex = rgbToHex(bgRaw);
         const status = HEX_TO_STATUS[hex] || 'none';
         const parsed = parseJob(val);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null };
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+5, col: c+1, lat: null, lng: null };
         // Attach cached geocode if available
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
           job.lat = geoCache[parsed.addr].lat;
@@ -774,7 +788,7 @@ async function loadData() {
 
     // Vendor notes (rows 19-23)
     vendorNotes = [];
-    for (let r = 13; r < 18; r++) {
+    for (let r = 14; r < 19; r++) {
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
@@ -1118,7 +1132,9 @@ async function confirmShop() {
   await sheetsSetValue(6, col, cellVal);
   await sheetsSetBackground(6, col, '#00ff00');
 
-  // Store notes in localStorage so they render on the ticket
+  // Store notes in sheet row 5 so tech's device reads them on sync
+  await sheetsSetValue(5, col, notes ? 'SHOPNOTE:'+notes : '').catch(()=>{});
+  // Also cache locally
   shopVisits[savedTech] = { shop: savedShop, notes };
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
 
@@ -1127,12 +1143,13 @@ async function confirmShop() {
 }
 
 async function clearShop(tech) {
-  const sv = shopVisits[tech];
   delete shopVisits[tech];
   localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-  // Clear row 6 for this tech (where shop ticket lives)
   const col = TECHS.indexOf(tech) + 1;
   if (col >= 1) {
+    // Clear shop note from row 5
+    await sheetsSetValue(5, col, '').catch(()=>{});
+    // Clear row 6 shop ticket
     await sheetsClear(6, col);
     // Shift remaining jobs back up
     const techJobs = jobs.filter(j=>j.tech===tech&&j.row>6).sort((a,b)=>(a.row||0)-(b.row||0));
