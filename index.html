@@ -1348,7 +1348,10 @@ async function renderTechView() {
   const mapSec = document.getElementById('mapsecTech');
 
   // Get today's green tickets sorted by row (shop is row 6 = first)
-  const myJobs = jobs.filter(j=>j.tech===tech&&j.color==='green').sort((a,b)=>(a.row||0)-(b.row||0));
+  const allTechJobs = jobs.filter(j=>j.tech===tech);
+  const myJobs = allTechJobs.filter(j=>j.color==='green').sort((a,b)=>(a.row||0)-(b.row||0));
+  // Debug: show what we found (remove after confirming)
+  toast('Tech:'+tech+' total:'+allTechJobs.length+' green:'+myJobs.length+(myJobs[0]?' first:'+myJobs[0].job:''));
 
   // Geocode any uncached addresses
   for (const j of myJobs) {
