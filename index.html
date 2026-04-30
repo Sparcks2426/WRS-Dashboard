@@ -750,6 +750,9 @@ async function loadData() {
     const fmtResp = await sheetsGetFormatting(`Sheet1!A2:K23`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
+    // Row 2 (index 0): shop tickets — read data here, pushed into jobs[] after jobs=[] below
+    const row2data = sheetData[0]?.values || [];
+
     // Row 3 (index 1): shop notes per tech
     const row3data = sheetData[1]?.values || [];
     row3data.forEach((cell, ci) => {
@@ -765,6 +768,18 @@ async function loadData() {
     });
 
     jobs = [];
+    // Re-add row 2 shop tickets (read above, cleared by jobs=[])
+    row2data.forEach((cell, ci) => {
+      const v = cell?.userEnteredValue?.stringValue || '';
+      const bgRaw2 = cell?.userEnteredFormat?.backgroundColor;
+      const hex2 = rgbToHex(bgRaw2);
+      if (v && v.trim() && (HEX_TO_STATUS[hex2]||'none') === 'green') {
+        const parsed = parseJob(v);
+        const j2 = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: parsed.addr, color: 'green', row: 2, col: ci+1, lat: null, lng: null };
+        if (parsed.addr && geoCache[parsed.addr]) { j2.lat=geoCache[parsed.addr].lat; j2.lng=geoCache[parsed.addr].lng; }
+        jobs.push(j2);
+      }
+    });
     let id = 1;
     for (let r = 4; r < 17; r++) {  // rows 6-18 (index 4-16, range starts at row 2)
       const rowData = sheetData[r]?.values || [];
