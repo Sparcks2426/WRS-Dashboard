@@ -219,6 +219,25 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 <!-- ── CONFIG BANNER (shown when CLIENT_ID not set) ── -->
 <div id="configBanner">⚠ Set your GOOGLE_CLIENT_ID and SHEET_ID in the CONFIG section at the top of this file before deploying.</div>
 
+<!-- ── DUPLICATE LOGIN BANNER + MODAL (admin only) ── -->
+<div id="dupeBanner" style="display:none;position:fixed;top:0;left:0;right:0;background:#b45309;color:#fff;font-family:Inter,sans-serif;font-size:12px;font-weight:700;text-align:center;padding:7px 40px;z-index:99998;letter-spacing:.3px">
+  ⚠ DUPLICATE LOGIN DETECTED — <span id="dupeBannerMsg"></span> &nbsp;·&nbsp;
+  <span style="text-decoration:underline;cursor:pointer" onclick="openSessionModal()">View Details</span>
+  &nbsp;·&nbsp;
+  <span style="cursor:pointer;opacity:.7" onclick="document.getElementById('dupeBanner').style.display='none'">✕ Dismiss</span>
+</div>
+
+<!-- Session detail modal -->
+<div id="sessionModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100000;align-items:center;justify-content:center">
+  <div style="background:#0e1320;border:1px solid #253048;border-radius:16px;padding:28px;width:100%;max-width:640px;max-height:80vh;overflow-y:auto;box-shadow:0 32px 80px rgba(0,0,0,.8)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+      <div style="font-family:'DM Serif Display',serif;font-size:20px;color:#fff;font-style:italic">Active Sessions</div>
+      <button onclick="closeSessionModal()" style="background:none;border:1px solid #253048;border-radius:6px;color:#5a6a8a;font-family:Inter,sans-serif;font-size:11px;font-weight:700;padding:4px 10px;cursor:pointer">CLOSE</button>
+    </div>
+    <div id="sessionModalBody" style="display:flex;flex-direction:column;gap:10px"></div>
+  </div>
+</div>
+
 <!-- ── LOGIN ── -->
 <div class="login-wrap" id="loginScreen">
   <div class="login-box">
@@ -480,6 +499,53 @@ const SHOP_LOCATIONS = {
   'South Shop':  { address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
 };
 let shopVisits = {}; // techName → { shop, notes }
+
+// ── Session heartbeat ──
+const SESSION_ID = Math.random().toString(36).slice(2,10); // unique per tab/load
+const HEARTBEAT_ROW = 27;   // row 27: one column per tech (A-K), col L onward for non-tech users
+const HEARTBEAT_COL_NONTECHS = 12; // column L (1-based) for non-tech users packed as JSON in one cell
+let SESSION_INFO = null; // populated async on login with device + geo info
+
+// Collect device fingerprint + IP geolocation (no permission needed)
+async function collectSessionInfo() {
+  const ua = navigator.userAgent;
+  // Parse OS
+  let os = 'Unknown OS';
+  if (/iPhone/.test(ua))       os = 'iPhone';
+  else if (/iPad/.test(ua))    os = 'iPad';
+  else if (/Android/.test(ua)) os = 'Android ' + (ua.match(/Android ([0-9.]+)/)?.[1]||'');
+  else if (/Windows/.test(ua)) os = 'Windows';
+  else if (/Mac OS X/.test(ua))os = 'Mac';
+  else if (/Linux/.test(ua))   os = 'Linux';
+  // Parse browser
+  let browser = 'Unknown';
+  if (/CriOS/.test(ua))        browser = 'Chrome/iOS';
+  else if (/FxiOS/.test(ua))   browser = 'Firefox/iOS';
+  else if (/EdgA/.test(ua))    browser = 'Edge/Android';
+  else if (/SamsungBrowser/.test(ua)) browser = 'Samsung Browser';
+  else if (/OPR|Opera/.test(ua))     browser = 'Opera';
+  else if (/Edg\//.test(ua))   browser = 'Edge';
+  else if (/Chrome/.test(ua))  browser = 'Chrome';
+  else if (/Safari/.test(ua))  browser = 'Safari';
+  else if (/Firefox/.test(ua)) browser = 'Firefox';
+  // Screen & timezone
+  const screen_res = `${window.screen.width}x${window.screen.height}`;
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown';
+  const language = navigator.language || 'Unknown';
+
+  let city = '', region = '', country = '', ip = '';
+  try {
+    const geo = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(4000) });
+    const gd  = await geo.json();
+    city    = gd.city    || '';
+    region  = gd.region  || '';
+    country = gd.country_name || '';
+    ip      = gd.ip      || '';
+  } catch(e) {}
+
+  SESSION_INFO = { os, browser, screen_res, timezone, language, city, region, country, ip };
+  return SESSION_INFO;
+}
 let shopModalTech = null, shopModalSelected = null;
 
 // ════════════════════════════════════════════
@@ -502,22 +568,13 @@ let shopModalTech = null, shopModalSelected = null;
   // Load saved shop visits from localStorage (overridden by sheet on first loadData)
   try { shopVisits = JSON.parse(localStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
 
-  // Auto-login: within 24hrs no prompt, within 30 days pre-fill name
+  // Auto-login: permanent — restore session silently whenever a saved user exists
   try {
     const saved = localStorage.getItem('wrs_user');
     if (saved) {
       const u = JSON.parse(saved);
-      const age = Date.now() - (u.saved || 0);
-      const DAY = 24*60*60*1000, MONTH = 30*DAY;
-      if (u && u.name && age < MONTH) {
-        if (age < DAY) {
-          // Within 24hrs — auto-login silently
-          acquireToken(() => startDash(u)); return;
-        } else {
-          // 1-30 days — pre-fill name on login screen
-          const sel = document.getElementById('loginName');
-          if (sel) sel.value = u.name;
-        }
+      if (u && u.name) {
+        acquireToken(() => startDash(u)); return;
       }
     }
   } catch(e) {}
@@ -555,6 +612,16 @@ function acquireToken(cb) {
   };
   tryAcquire();
 }
+
+// ── Silent token refresh every 45 min (tokens last ~60 min) ──
+function scheduleTokenRefresh() {
+  setInterval(() => {
+    if (!curUser) return; // not logged in, nothing to refresh
+    ensureTokenClient();
+    tokenClient.requestAccessToken({ prompt: '' }); // always silent — no consent screen
+  }, 45 * 60 * 1000);
+}
+scheduleTokenRefresh();
 
 // ════════════════════════════════════════════
 //  LOGIN / LOGOUT
@@ -613,6 +680,8 @@ function startDash(user) {
     document.getElementById('techView').style.display  = 'none';
   }
   loadData();
+  startHeartbeat();
+  if (curUser.role === 'admin') checkDuplicateLogins();
 }
 
 function showAdminView() {
@@ -640,7 +709,12 @@ function backToTechView() {
 // ════════════════════════════════════════════
 async function sheetsGet(range) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (r.status === 401) {
+    // Token expired — silently refresh then retry once
+    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  }
   if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
   return r.json();
 }
@@ -655,7 +729,11 @@ async function sheetsBatchGet(ranges) {
 
 async function sheetsGetFormatting(range) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat(backgroundColor)))))`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (r.status === 401) {
+    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  }
   if (!r.ok) {
     const txt = await r.text().catch(()=>'');
     throw new Error(`Sheets formatting failed: ${r.status} ${txt.substring(0,100)}`);
@@ -1431,9 +1509,142 @@ function buildTechCards(allStops, legs, totalMin, totalMi, tc, dark) {
 }
 
 // ════════════════════════════════════════════
+//  SESSION HEARTBEAT (duplicate login detection)
+// ════════════════════════════════════════════
+
+// Write this session's presence to the sheet
+async function writeHeartbeat() {
+  if (!curUser || !gAccessToken) return;
+  const ts = Date.now();
+  const info = SESSION_INFO || {};
+  // Full session record stored as JSON
+  const record = JSON.stringify({ name: curUser.name, sid: SESSION_ID, ts, ...info });
+
+  try {
+    if (isTech && curUser.tech) {
+      // Tech users: write into their column (A=1…K=11)
+      const col = TECHS.indexOf(curUser.tech) + 1;
+      if (col >= 1) await sheetsSetValue(HEARTBEAT_ROW, col, record);
+    } else {
+      // Non-tech users: pack all into col L as JSON blob keyed by SESSION_ID
+      let existing = {};
+      try {
+        const r = await sheetsGet(`Sheet1!L${HEARTBEAT_ROW}`);
+        const raw = r.values?.[0]?.[0] || '';
+        if (raw) existing = JSON.parse(raw);
+      } catch(e) {}
+      existing[SESSION_ID] = JSON.parse(record);
+      // Prune stale entries (>3 min)
+      const cutoff = Date.now() - 3*60*1000;
+      Object.keys(existing).forEach(k => { if ((existing[k].ts||0) < cutoff) delete existing[k]; });
+      await sheetsSetValue(HEARTBEAT_ROW, HEARTBEAT_COL_NONTECHS, JSON.stringify(existing));
+    }
+  } catch(e) {} // heartbeat failures are non-fatal
+}
+
+// Parse a raw cell into a session record object (handles both old pipe format and new JSON)
+function parseSessionRecord(raw) {
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch(e) {}
+  // Legacy fallback: name|sid|ts
+  const parts = raw.split('|');
+  if (parts.length >= 3) return { name: parts[0], sid: parts[1], ts: parseInt(parts[2],10) };
+  return null;
+}
+
+// Format a session record into a human-readable description
+function formatSession(rec, idx) {
+  const loc = [rec.city, rec.region, rec.country].filter(Boolean).join(', ') || rec.timezone || 'Location unknown';
+  const device = [rec.os, rec.browser].filter(Boolean).join(' · ') || 'Unknown device';
+  const ip = rec.ip ? ` · IP: ${rec.ip}` : '';
+  const ago = rec.ts ? Math.round((Date.now()-rec.ts)/1000/60) : '?';
+  return `<div style="background:#131929;border:1px solid #1e2535;border-radius:10px;padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:11px;font-weight:800;color:#e2e8f4;letter-spacing:.5px">SESSION ${idx+1}</span>
+      <span style="font-size:10px;color:#5a6a8a">${ago}m ago</span>
+    </div>
+    <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px">📱 ${device}</div>
+    <div style="font-size:12px;color:#10b981;font-weight:600;margin-bottom:2px">📍 ${loc}${ip}</div>
+    <div style="font-size:10px;color:#5a6a8a">${rec.timezone||''} · ${rec.language||''} · ${rec.screen_res||''}</div>
+  </div>`;
+}
+
+// All active sessions keyed by name (populated by checkDuplicateLogins, used by modal)
+let allActiveSessions = {};
+
+// Read all heartbeats and alert admin if any user appears more than once
+async function checkDuplicateLogins() {
+  if (!curUser || curUser.role !== 'admin') return;
+  try {
+    const resp = await sheetsGet(`Sheet1!A${HEARTBEAT_ROW}:L${HEARTBEAT_ROW}`);
+    const row = resp.values?.[0] || [];
+    const cutoff = Date.now() - 2*60*1000;
+
+    const seen = {}; // name → [record, ...]
+
+    // Tech columns A–K (index 0–10)
+    for (let i = 0; i < 11; i++) {
+      const rec = parseSessionRecord(row[i]);
+      if (!rec || !rec.name || !rec.ts || rec.ts < cutoff) continue;
+      if (!seen[rec.name]) seen[rec.name] = [];
+      seen[rec.name].push(rec);
+    }
+
+    // Non-tech col L (index 11) — JSON blob of {sid: record}
+    try {
+      const blob = row[11];
+      if (blob) {
+        const obj = JSON.parse(blob);
+        Object.values(obj).forEach(rec => {
+          if (!rec || !rec.name || !rec.ts || rec.ts < cutoff) return;
+          if (!seen[rec.name]) seen[rec.name] = [];
+          seen[rec.name].push(rec);
+        });
+      }
+    } catch(e) {}
+
+    allActiveSessions = seen;
+
+    const dupes = Object.entries(seen).filter(([,recs]) => recs.length > 1).map(([name]) => name);
+    const banner = document.getElementById('dupeBanner');
+    const msg    = document.getElementById('dupeBannerMsg');
+    if (dupes.length) {
+      msg.textContent = dupes.join(', ') + (dupes.length === 1 ? ' is' : ' are') + ' logged in from multiple devices';
+      banner.style.display = 'block';
+    }
+  } catch(e) {}
+}
+
+function openSessionModal() {
+  const body = document.getElementById('sessionModalBody');
+  const dupes = Object.entries(allActiveSessions).filter(([,recs]) => recs.length > 1);
+  if (!dupes.length) { body.innerHTML = '<div style="color:#5a6a8a;font-size:13px;text-align:center;padding:20px">No duplicate sessions detected.</div>'; }
+  else {
+    body.innerHTML = dupes.map(([name, recs]) =>
+      `<div>
+        <div style="font-size:11px;font-weight:800;color:#f97316;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">⚠ ${name}</div>
+        <div style="display:flex;flex-direction:column;gap:6px">${recs.map((r,i) => formatSession(r,i)).join('')}</div>
+      </div>`
+    ).join('<div style="height:1px;background:#1e2535;margin:10px 0"></div>');
+  }
+  document.getElementById('sessionModalBg').style.display = 'flex';
+}
+
+function closeSessionModal() {
+  document.getElementById('sessionModalBg').style.display = 'none';
+}
+
+// Kick off heartbeat on login and every 55s
+function startHeartbeat() {
+  // Collect device + geo info first, then write heartbeat
+  collectSessionInfo().then(() => writeHeartbeat());
+  setInterval(writeHeartbeat, 55000);
+}
+
+// ════════════════════════════════════════════
 //  AUTO-REFRESH
 // ════════════════════════════════════════════
-setInterval(()=>{ if(curUser) loadData(); }, 60000);
+setInterval(()=>{ if(curUser) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
 
 // ════════════════════════════════════════════
 //  TOAST
