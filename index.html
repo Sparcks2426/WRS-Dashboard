@@ -910,7 +910,7 @@ function parseJob(raw) {
 // ════════════════════════════════════════════
 //  GEOCODING (Nominatim, serialised, cached)
 // ════════════════════════════════════════════
-async function geocodeOne(addr) {
+async function geocodeOne(addr, retries=3) {
   if (geoCache[addr]) return geoCache[addr];
   if (CONFIG.MAPS_API_KEY) {
     const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&key=${CONFIG.MAPS_API_KEY}`;
@@ -923,13 +923,18 @@ async function geocodeOne(addr) {
     }
     return null;
   }
-  // Free Nominatim fallback
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(addr)}`;
-  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
-  const d = await r.json();
-  if (d && d.length) {
-    geoCache[addr] = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
-    return geoCache[addr];
+  // Free Nominatim with retry + backoff
+  for (let attempt=0; attempt<retries; attempt++) {
+    try {
+      if (attempt > 0) await new Promise(r=>setTimeout(r, 1500 * attempt));
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(addr)}`;
+      const r = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(6000) });
+      const d = await r.json();
+      if (d && d.length) {
+        geoCache[addr] = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+        return geoCache[addr];
+      }
+    } catch(e) { /* retry */ }
   }
   return null;
 }
@@ -1285,10 +1290,28 @@ function bindDrag() {
         render(); updateMap();
         swapRows(sr, parseInt(ds.dataset.col), tr).catch(()=>toast('Reorder failed'));
       } else {
-        // Cross-column: move job to target tech
-        sJob.tech = tJob.tech;
+        // Cross-column: move job to target tech's column
+        const oldRow = sJob.row, oldCol = sJob.col;
+        const newTech = tJob.tech;
+        const newCol = TECHS.indexOf(newTech) + 1;
+        // Find first empty row in destination column
+        const occupied = new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
+        let newRow = null;
+        for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
+        if (!newRow) { toast(`${newTech} column is full`); return; }
+        // Read source cell value + color before mutating
+        const srcVal = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
+        const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
+        // Update in-memory
+        sJob.tech = newTech; sJob.col = newCol; sJob.row = newRow;
         render(); updateMap();
-        toast(`Moved to ${tJob.tech}`);
+        toast(`Moved to ${newTech}`);
+        // Write to sheet: clear old cell, write to new cell with same color
+        Promise.all([
+          sheetsClear(oldRow, oldCol),
+          sheetsSetValue(newRow, newCol, srcVal),
+          sheetsSetBackground(newRow, newCol, srcHex)
+        ]).catch(()=>toast('Move save failed'));
       }
     });
     el.draggable = false;
@@ -1304,7 +1327,23 @@ function bindDrag() {
       if(!sJob) return;
       const newTech=tj.dataset.tech;
       if(!newTech||newTech===sJob.tech) return;
-      if(TECHS.includes(newTech)){ sJob.tech=newTech; render(); updateMap(); toast(`Moved to ${newTech}`); }
+      if(!TECHS.includes(newTech)) return;
+      const oldRow=sJob.row, oldCol=sJob.col;
+      const newCol=TECHS.indexOf(newTech)+1;
+      const occupied=new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
+      let newRow=null;
+      for(let r=JOB_ROW_START;r<=JOB_ROW_END;r++){if(!occupied.has(r)){newRow=r;break;}}
+      if(!newRow){toast(`${newTech} column is full`);return;}
+      const srcVal=sJob.job+(sJob.address?' - '+sJob.address:'');
+      const srcHex=STATUS_TO_HEX[sJob.color]||'#ffffff';
+      sJob.tech=newTech; sJob.col=newCol; sJob.row=newRow;
+      render(); updateMap();
+      toast(`Moved to ${newTech}`);
+      Promise.all([
+        sheetsClear(oldRow,oldCol),
+        sheetsSetValue(newRow,newCol,srcVal),
+        sheetsSetBackground(newRow,newCol,srcHex)
+      ]).catch(()=>toast('Move save failed'));
     });
   });
 }
@@ -1429,7 +1468,7 @@ async function renderTechView() {
   for (const j of toGeocode) {
     const coords = await geocodeOne(j.address);
     if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
-    if (!CONFIG.MAPS_API_KEY && toGeocode.indexOf(j)<toGeocode.length-1) await new Promise(r=>setTimeout(r,1100));
+    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200)); // Nominatim rate limit: 1 req/sec
   }
 
   if (!myJobs.length) {
@@ -1474,22 +1513,25 @@ async function renderTechView() {
 
   if(mapStops.length>=2){
     const wp=mapStops.map(s=>s.lng+','+s.lat).join(';');
+    console.log(`[Route] ${mapStops.length} stops for ${tech}:`, mapStops.map(s=>s.name));
     fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson&steps=false`)
       .then(r=>r.json()).then(d=>{
+        console.log('[OSRM]', d.code, d.routes?.[0]?.legs?.length, 'legs');
         if(d.code==='Ok'&&d.routes&&d.routes[0]){
           const route=d.routes[0];
           L.polyline(route.geometry.coordinates.map(c=>[c[1],c[0]]),{color:tc,weight:4,opacity:.85}).addTo(routeLayerTech);
           const totalMin=Math.round(route.duration/60);
           const totalMi=(route.distance/1609.34).toFixed(1);
-          // Build a legs array indexed by allStops position
-          // leg[i] = time from mapStop[i] → mapStop[i+1]
-          // We assign that leg to allStops[mapStopIndices[i]]
           const rawLegs=route.legs.map(l=>({min:Math.round(l.duration/60),mi:(l.distance/1609.34).toFixed(1)}));
-          const legsById = {}; // allStops index → leg to next geocoded stop
+          const legsById = {};
           rawLegs.forEach((leg, li) => { legsById[mapStopIndices[li]] = leg; });
           buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark);
+        } else {
+          console.warn('[OSRM] Route failed:', d.code, d.message);
         }
-      }).catch(()=>{});
+      }).catch(e=>console.error('[OSRM] fetch error:', e));
+  } else {
+    console.log(`[Route] Only ${mapStops.length} geocoded stop(s) — skipping OSRM`);
   }
   buildTechCards(allStops, null, null, null, tc, dark);
 }
