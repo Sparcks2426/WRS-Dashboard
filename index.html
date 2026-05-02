@@ -115,6 +115,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .tn{font-weight:800;font-size:15px;letter-spacing:.3px;cursor:pointer;flex:1;text-align:center;transition:opacity .15s}
 .tn:hover{opacity:.75}
 .tcnt{font-size:11px;font-weight:700;color:var(--dm2);background:var(--bg);padding:2px 7px;border-radius:8px;border:1px solid var(--bd)}
+.sort-btn{background:none;border:1px solid var(--bd);border-radius:5px;color:var(--dm2);font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer;letter-spacing:.3px;transition:border-color .15s,color .15s;font-family:Inter,sans-serif}
+.sort-btn:hover{border-color:var(--ac);color:var(--ac)}
+.sort-btn.sorting{opacity:.5;pointer-events:none}
 .tjobs{padding:6px;display:flex;flex-direction:column;gap:4px;min-height:48px}
 /* shop indicator + badge */
 .shop-badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;cursor:pointer;flex-shrink:0;transition:all .15s;border:1px solid currentColor;opacity:.8}
@@ -500,7 +503,24 @@ const SHOP_LOCATIONS = {
   'North Shop': { address: '111 Reed Rd, West Palm Beach, FL 33403' },
   'South Shop':  { address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
 };
+// ── Tech starting locations (home address or yard) ──
+// Fill these in using the wrs-tech-locations.csv file provided
+const TECH_START_LOCATIONS = {
+  'Jeff':      { lat: null, lng: null, address: '3825 Service Ct, Wellington, FL 33467' },
+  'Alex':      { lat: null, lng: null, address: '1825 Calida Dr, West Palm Beach, FL 33411' },
+  'Landi':     { lat: null, lng: null, address: '8913 Springtree Lakes Dr, Sunrise, FL 33351' },
+  'Geni':      { lat: null, lng: null, address: '5320 NW 89th Terrace, Sunrise, FL 33351' },
+  'Christian': { lat: null, lng: null, address: '21181 San Simeon Way, Miami, FL 33179' },
+  'Mijail':    { lat: null, lng: null, address: '2601 NE 13th Ave, Pompano Beach, FL 33064' },
+  'Louis':     { lat: null, lng: null, address: '6907 Lake Ave, West Palm Beach, FL 33405' },
+  'Maikol':    { lat: null, lng: null, address: '2334 S Cypress Bend Dr, Pompano Beach, FL 33069' },
+  'Jesse':     { lat: null, lng: null, address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
+  'Landon':    { lat: null, lng: null, address: '4603 Kelmar Dr, West Palm Beach, FL 33415' },
+  'QUE':       { lat: null, lng: null, address: '' },
+};
+
 let shopVisits = {}; // techName → { shop, notes }
+let isSaving = false; // blocks auto-refresh during sheet writes
 
 // ── Session heartbeat ──
 const SESSION_ID = Math.random().toString(36).slice(2,10); // unique per tab/load
@@ -763,19 +783,21 @@ async function sheetsSetBackground(row, col, hexColor) {
 
 async function sheetsSetValue(row, col, value) {
   const range = `Sheet1!${colLetter(col)}${row}`;
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ values: [[value]] }),
   });
+  if (!r.ok) throw new Error(`sheetsSetValue failed: ${r.status}`);
 }
 
 async function sheetsClear(row, col) {
   const range = `Sheet1!${colLetter(col)}${row}`;
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${gAccessToken}` },
   });
+  if (!r.ok) throw new Error(`sheetsClear failed: ${r.status}`);
   await sheetsSetBackground(row, col, '#ffffff');
 }
 
@@ -989,6 +1011,7 @@ function rBoard() {
     h += `<div class="thdr">
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
       ${sv && sv.shop ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
+      ${canWrite && tj.length > 1 ? `<button class="sort-btn" id="sortbtn_${tech}" onclick="autoSortTech('${tech}')" title="Sort by nearest distance from first job">⇅ SORT</button>` : ''}
       <span class="tcnt">${tj.length + (sv && sv.shop?1:0)}</span>
     </div>
     <div class="tjobs" data-tech="${tech}">`;
@@ -1063,6 +1086,143 @@ function jobCard(j, editable) {
 }
 
 // ── Job mutations ──
+// ── Auto-sort: nearest-neighbor from first job ──
+async function autoSortTech(tech) {
+  if (!canWrite) return;
+  const btn = document.getElementById('sortbtn_' + tech);
+  if (btn) btn.classList.add('sorting');
+
+  // Get this tech's green jobs only (sorted by current row)
+  const techJobs = jobs.filter(j => j.tech === tech && j.color === 'green')
+                       .sort((a,b) => a.row - b.row);
+
+  if (techJobs.length < 2) {
+    if (btn) btn.classList.remove('sorting');
+    toast('Need at least 2 geocoded jobs to sort');
+    return;
+  }
+
+  // Geocode any missing addresses first
+  for (const j of techJobs) {
+    if (!j.lat && j.address) {
+      const c = await geocodeOne(j.address);
+      if (c) { j.lat = c.lat; j.lng = c.lng; }
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+
+  const geocoded = techJobs.filter(j => j.lat && j.lng);
+  const ungeocoded = techJobs.filter(j => !j.lat || !j.lng);
+
+  if (geocoded.length < 2) {
+    if (btn) btn.classList.remove('sorting');
+    toast('Not enough geocoded addresses to sort');
+    return;
+  }
+
+  // Determine starting point:
+  // If tech has a shop visit today → use shop coords as origin
+  // Otherwise → use tech's home/start location
+  // If neither available → fall back to first geocoded job
+  let originLat = null, originLng = null, originLabel = 'first job';
+
+  const sv = shopVisits[tech];
+  if (sv && sv.shop && SHOP_LOCATIONS[sv.shop]) {
+    // Geocode the shop address to get coords
+    const shopAddr = SHOP_LOCATIONS[sv.shop].address;
+    let shopCoords = geoCache[shopAddr];
+    if (!shopCoords) {
+      shopCoords = await geocodeOne(shopAddr);
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
+    }
+    if (shopCoords) {
+      originLat = shopCoords.lat; originLng = shopCoords.lng;
+      originLabel = sv.shop;
+    }
+  }
+
+  if (originLat === null) {
+    const home = TECH_START_LOCATIONS[tech];
+    if (home?.lat && home?.lng) {
+      originLat = home.lat; originLng = home.lng;
+      originLabel = 'home';
+    } else if (home?.address) {
+      // Address provided but no coords yet — geocode it
+      const hc = await geocodeOne(home.address);
+      if (hc) {
+        TECH_START_LOCATIONS[tech].lat = hc.lat;
+        TECH_START_LOCATIONS[tech].lng = hc.lng;
+        originLat = hc.lat; originLng = hc.lng;
+        originLabel = 'home';
+      }
+    }
+  }
+
+  // If still no origin, fall back to first geocoded job as anchor
+  if (originLat === null) {
+    originLat = geocoded[0].lat; originLng = geocoded[0].lng;
+    originLabel = 'first job (no home location set)';
+  }
+
+  // Nearest-neighbor greedy sort from origin
+  const sorted = [];
+  const remaining = [...geocoded];
+  let curLat = originLat, curLng = originLng;
+  while (remaining.length) {
+    let bestIdx = 0, bestDist = Infinity;
+    remaining.forEach((j, i) => {
+      const d = Math.pow(j.lat - curLat, 2) + Math.pow(j.lng - curLng, 2);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    });
+    const next = remaining.splice(bestIdx, 1)[0];
+    sorted.push(next);
+    curLat = next.lat; curLng = next.lng;
+  }
+
+  // Append ungeocoded jobs at end (can't sort what we can't locate)
+  const finalOrder = [...sorted, ...ungeocoded];
+
+  // Check if order actually changed
+  const changed = finalOrder.some((j, i) => j.id !== techJobs[i]?.id);
+  if (!changed) {
+    if (btn) btn.classList.remove('sorting');
+    toast(`${tech} is already in optimal order`);
+    return;
+  }
+
+  // Assign new rows (use existing row slots in ascending order)
+  const rowSlots = techJobs.map(j => j.row).sort((a,b) => a-b);
+  const oldRowCols = techJobs.map(j => ({ row: j.row, col: j.col, val: j.job + (j.address ? ' - ' + j.address : ''), hex: STATUS_TO_HEX[j.color] || '#ffffff' }));
+
+  // Save old values keyed by job id
+  const jobData = {};
+  techJobs.forEach(j => {
+    jobData[j.id] = { val: j.job + (j.address ? ' - ' + j.address : ''), hex: STATUS_TO_HEX[j.color] || '#ffffff' };
+  });
+
+  isSaving = true;
+  toast(`Sorting ${tech}...`);
+  try {
+    // Write each job to its new row slot sequentially
+    for (let i = 0; i < finalOrder.length; i++) {
+      const j = finalOrder[i];
+      const newRow = rowSlots[i];
+      const d = jobData[j.id];
+      await sheetsSetValue(newRow, j.col, d.val);
+      await sheetsSetBackground(newRow, j.col, d.hex);
+      j.row = newRow; // update in memory
+    }
+    render(); updateMap();
+    toast(`✓ ${tech} sorted from ${originLabel}`);
+  } catch(err) {
+    toast('Sort save failed — try again');
+    console.error('autoSortTech error:', err);
+  } finally {
+    isSaving = false;
+    if (btn) btn.classList.remove('sorting');
+  }
+}
+
 function addJ(tech) {
   if (!canWrite) return;
   const inp = document.getElementById('ai_'+tech), v = inp?.value.trim();
@@ -1294,24 +1454,26 @@ function bindDrag() {
         const oldRow = sJob.row, oldCol = sJob.col;
         const newTech = tJob.tech;
         const newCol = TECHS.indexOf(newTech) + 1;
-        // Find first empty row in destination column
         const occupied = new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
         let newRow = null;
         for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
         if (!newRow) { toast(`${newTech} column is full`); return; }
-        // Read source cell value + color before mutating
         const srcVal = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
         const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
-        // Update in-memory
-        sJob.tech = newTech; sJob.col = newCol; sJob.row = newRow;
-        render(); updateMap();
-        toast(`Moved to ${newTech}`);
-        // Write to sheet: clear old cell, write to new cell with same color
-        Promise.all([
-          sheetsClear(oldRow, oldCol),
-          sheetsSetValue(newRow, newCol, srcVal),
-          sheetsSetBackground(newRow, newCol, srcHex)
-        ]).catch(()=>toast('Move save failed'));
+        // Pause auto-refresh, write sheet first, then update UI
+        isSaving = true;
+        toast(`Moving to ${newTech}...`);
+        try {
+          await sheetsClear(oldRow, oldCol);
+          await sheetsSetValue(newRow, newCol, srcVal);
+          await sheetsSetBackground(newRow, newCol, srcHex);
+          sJob.tech = newTech; sJob.col = newCol; sJob.row = newRow;
+          render(); updateMap();
+          toast(`✓ Moved to ${newTech}`);
+        } catch(err) {
+          toast('Move failed — try again');
+          console.error('Cross-column move failed:', err);
+        } finally { isSaving = false; }
       }
     });
     el.draggable = false;
@@ -1320,7 +1482,7 @@ function bindDrag() {
   document.querySelectorAll('.tjobs').forEach(tj => {
     tj.addEventListener('dragover', e=>{ e.preventDefault(); tj.classList.add('dragover'); });
     tj.addEventListener('dragleave', ()=>tj.classList.remove('dragover'));
-    tj.addEventListener('drop', e=>{
+    tj.addEventListener('drop', async e=>{
       e.preventDefault(); tj.classList.remove('dragover');
       if(!ds) return;
       const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
@@ -1336,14 +1498,19 @@ function bindDrag() {
       if(!newRow){toast(`${newTech} column is full`);return;}
       const srcVal=sJob.job+(sJob.address?' - '+sJob.address:'');
       const srcHex=STATUS_TO_HEX[sJob.color]||'#ffffff';
-      sJob.tech=newTech; sJob.col=newCol; sJob.row=newRow;
-      render(); updateMap();
-      toast(`Moved to ${newTech}`);
-      Promise.all([
-        sheetsClear(oldRow,oldCol),
-        sheetsSetValue(newRow,newCol,srcVal),
-        sheetsSetBackground(newRow,newCol,srcHex)
-      ]).catch(()=>toast('Move save failed'));
+      isSaving = true;
+      toast(`Moving to ${newTech}...`);
+      try {
+        await sheetsClear(oldRow,oldCol);
+        await sheetsSetValue(newRow,newCol,srcVal);
+        await sheetsSetBackground(newRow,newCol,srcHex);
+        sJob.tech=newTech; sJob.col=newCol; sJob.row=newRow;
+        render(); updateMap();
+        toast(`✓ Moved to ${newTech}`);
+      } catch(err) {
+        toast('Move failed — try again');
+        console.error('tjobs move failed:', err);
+      } finally { isSaving=false; }
     });
   });
 }
@@ -1463,12 +1630,21 @@ async function renderTechView() {
   });
 
 
-  // Geocode all uncached addresses sequentially — shop first
-  const toGeocode = myJobs.filter(j=>j.address&&!j.lat);
+  // Geocode all addresses — force re-check even if j.lat set, in case geoCache has fresher data
+  const toGeocode = myJobs.filter(j=>j.address);
   for (const j of toGeocode) {
+    if (geoCache[j.address]) {
+      // Already cached — just sync to job and allStop
+      j.lat=geoCache[j.address].lat; j.lng=geoCache[j.address].lng;
+      const stop=allStops.find(s=>s.jobRef===j); if(stop){stop.lat=j.lat;stop.lng=j.lng;}
+      continue;
+    }
     const coords = await geocodeOne(j.address);
-    if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
-    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200)); // Nominatim rate limit: 1 req/sec
+    if (coords) {
+      j.lat=coords.lat; j.lng=coords.lng;
+      const stop=allStops.find(s=>s.jobRef===j); if(stop){stop.lat=j.lat;stop.lng=j.lng;}
+    }
+    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200)); // Nominatim: 1 req/sec
   }
 
   if (!myJobs.length) {
@@ -1477,15 +1653,23 @@ async function renderTechView() {
     return;
   }
 
+
   // Build stops — detect shop ticket by matching job name with known shop names
   const SHOP_NAMES = Object.keys(SHOP_LOCATIONS);
   const allStops = myJobs.map((j,i)=>{
     const isShop = SHOP_NAMES.includes(j.job);
-    // Get notes from shopVisits — works even on tech's own device where sv.shop may not be set
     const notes = isShop ? (shopVisits[tech]?.notes || '') : '';
-    return { label:String(i+1), name:j.job, notes, addr:j.address, lat:j.lat||null, lng:j.lng||null, isShop };
+    // Pull freshest coords from geoCache first, then job object
+    const cached = j.address ? geoCache[j.address] : null;
+    const lat = cached?.lat || j.lat || null;
+    const lng = cached?.lng || j.lng || null;
+    return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop, jobRef:j };
   });
+
+
+  // Build mapStops AFTER geocoding so all available coords are included
   const mapStops = allStops.filter(s=>s.lat&&s.lng);
+  console.log(`[Geo] ${tech}: ${mapStops.length}/${allStops.length} stops geocoded`, mapStops.map(s=>s.name));
 
   // Show map
   mapSec.style.display='';
@@ -1699,7 +1883,7 @@ function startHeartbeat() {
 // ════════════════════════════════════════════
 //  AUTO-REFRESH
 // ════════════════════════════════════════════
-setInterval(()=>{ if(curUser) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
+setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
 
 // ════════════════════════════════════════════
 //  TOAST
