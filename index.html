@@ -36,7 +36,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .login-divider{display:flex;align-items:center;gap:10px;margin-bottom:18px}
 .login-divider::before,.login-divider::after{content:'';flex:1;height:1px;background:rgba(255,255,255,.08)}
 .login-divider span{font-size:10px;color:rgba(255,255,255,.25);letter-spacing:1px;text-transform:uppercase;font-weight:600}
-.login-box select,.login-box input{width:100%;padding:13px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#fff;font-family:'Inter',sans-serif;font-size:14px;outline:none;margin-bottom:12px;transition:border-color .2s,background .2s;-webkit-appearance:none}
+.login-box select,.login-box input{width:100%;padding:13px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#fff;font-family:'Inter',sans-serif;font-size:14px;outline:none;margin-bottom:12px;transition:border-color .2s,background .2s}
+.login-box input{-webkit-appearance:none}
+.login-box select{appearance:auto;-webkit-appearance:menulist;padding-right:32px;cursor:pointer}
 .login-box select:focus,.login-box input:focus{border-color:rgba(220,38,38,.5);background:rgba(255,255,255,.06)}
 .login-box select option{background:#12131a;color:#fff}
 .lbtn{width:100%;padding:14px;border:none;border-radius:10px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.5px;transition:all .2s;margin-top:4px;box-shadow:0 4px 20px rgba(220,38,38,.3)}
