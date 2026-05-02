@@ -577,10 +577,12 @@ let shopModalTech = null, shopModalSelected = null;
   if (CONFIG.CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com') {
     document.getElementById('configBanner').style.display = 'block';
   }
-  // Populate custom login dropdown
+  // Populate custom login dropdown and move to body to escape backdrop-filter stacking context
   const nameOpts = document.getElementById('nameDropdownOptions');
   const nameTrigger = document.getElementById('nameDropdownTrigger');
   if (nameOpts && nameTrigger) {
+    // Move to body NOW (DOMContentLoaded already fired for inline scripts)
+    document.body.appendChild(nameOpts);
     USERS.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(u => {
       const div = document.createElement('div');
       div.className = 'custom-select-option';
