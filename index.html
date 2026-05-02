@@ -115,9 +115,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .tn{font-weight:800;font-size:15px;letter-spacing:.3px;cursor:pointer;flex:1;text-align:center;transition:opacity .15s}
 .tn:hover{opacity:.75}
 .tcnt{font-size:11px;font-weight:700;color:var(--dm2);background:var(--bg);padding:2px 7px;border-radius:8px;border:1px solid var(--bd)}
-.sort-btn{background:none;border:1px solid var(--bd);border-radius:5px;color:var(--dm2);font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer;letter-spacing:.3px;transition:border-color .15s,color .15s;font-family:Inter,sans-serif}
-.sort-btn:hover{border-color:var(--ac);color:var(--ac)}
-.sort-btn.sorting{opacity:.5;pointer-events:none}
+
 .tjobs{padding:6px;display:flex;flex-direction:column;gap:4px;min-height:48px}
 /* shop indicator + badge */
 .shop-badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;cursor:pointer;flex-shrink:0;transition:all .15s;border:1px solid currentColor;opacity:.8}
@@ -913,6 +911,9 @@ async function loadData() {
     // Geocode green jobs in background then refresh map
     geocodeGreenJobs().then(() => { if (isTech && !viewingAll) renderTechView(); else updateMap(); });
 
+    // Morning auto-sort: runs once after 6 AM, writes order to sheet
+    runMorningSortIfNeeded();
+
   } catch(e) {
     setSyncState('error');
     console.error(e);
@@ -1011,7 +1012,6 @@ function rBoard() {
     h += `<div class="thdr">
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
       ${sv && sv.shop ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
-      ${canWrite && tj.length > 1 ? `<button class="sort-btn" id="sortbtn_${tech}" onclick="autoSortTech('${tech}')" title="Sort by nearest distance from first job">⇅ SORT</button>` : ''}
       <span class="tcnt">${tj.length + (sv && sv.shop?1:0)}</span>
     </div>
     <div class="tjobs" data-tech="${tech}">`;
@@ -1087,22 +1087,14 @@ function jobCard(j, editable) {
 
 // ── Job mutations ──
 // ── Auto-sort: nearest-neighbor from first job ──
+// ── Sort a single tech's column by nearest-neighbor from home/shop ──
+// Returns true if sort was written to sheet, false if skipped/failed
 async function autoSortTech(tech) {
-  if (!canWrite) return;
-  const btn = document.getElementById('sortbtn_' + tech);
-  if (btn) btn.classList.add('sorting');
-
-  // Get this tech's green jobs only (sorted by current row)
   const techJobs = jobs.filter(j => j.tech === tech && j.color === 'green')
                        .sort((a,b) => a.row - b.row);
+  if (techJobs.length < 2) return false;
 
-  if (techJobs.length < 2) {
-    if (btn) btn.classList.remove('sorting');
-    toast('Need at least 2 geocoded jobs to sort');
-    return;
-  }
-
-  // Geocode any missing addresses first
+  // Geocode any missing addresses
   for (const j of techJobs) {
     if (!j.lat && j.address) {
       const c = await geocodeOne(j.address);
@@ -1113,113 +1105,98 @@ async function autoSortTech(tech) {
 
   const geocoded = techJobs.filter(j => j.lat && j.lng);
   const ungeocoded = techJobs.filter(j => !j.lat || !j.lng);
+  if (geocoded.length < 2) return false;
 
-  if (geocoded.length < 2) {
-    if (btn) btn.classList.remove('sorting');
-    toast('Not enough geocoded addresses to sort');
-    return;
-  }
-
-  // Determine starting point:
-  // If tech has a shop visit today → use shop coords as origin
-  // Otherwise → use tech's home/start location
-  // If neither available → fall back to first geocoded job
-  let originLat = null, originLng = null, originLabel = 'first job';
-
+  // Origin: shop (if assigned today) → home → first job
+  let originLat = null, originLng = null;
   const sv = shopVisits[tech];
-  if (sv && sv.shop && SHOP_LOCATIONS[sv.shop]) {
-    // Geocode the shop address to get coords
+  if (sv?.shop && SHOP_LOCATIONS[sv.shop]) {
     const shopAddr = SHOP_LOCATIONS[sv.shop].address;
-    let shopCoords = geoCache[shopAddr];
-    if (!shopCoords) {
-      shopCoords = await geocodeOne(shopAddr);
-      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
-    }
-    if (shopCoords) {
-      originLat = shopCoords.lat; originLng = shopCoords.lng;
-      originLabel = sv.shop;
-    }
+    const sc = geoCache[shopAddr] || await geocodeOne(shopAddr);
+    if (sc) { originLat = sc.lat; originLng = sc.lng; }
+    if (!CONFIG.MAPS_API_KEY && !geoCache[shopAddr]) await new Promise(r => setTimeout(r, 1200));
   }
-
   if (originLat === null) {
     const home = TECH_START_LOCATIONS[tech];
     if (home?.lat && home?.lng) {
       originLat = home.lat; originLng = home.lng;
-      originLabel = 'home';
     } else if (home?.address) {
-      // Address provided but no coords yet — geocode it
       const hc = await geocodeOne(home.address);
-      if (hc) {
-        TECH_START_LOCATIONS[tech].lat = hc.lat;
-        TECH_START_LOCATIONS[tech].lng = hc.lng;
-        originLat = hc.lat; originLng = hc.lng;
-        originLabel = 'home';
-      }
+      if (hc) { TECH_START_LOCATIONS[tech].lat=hc.lat; TECH_START_LOCATIONS[tech].lng=hc.lng; originLat=hc.lat; originLng=hc.lng; }
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
     }
   }
-
-  // If still no origin, fall back to first geocoded job as anchor
-  if (originLat === null) {
-    originLat = geocoded[0].lat; originLng = geocoded[0].lng;
-    originLabel = 'first job (no home location set)';
-  }
+  if (originLat === null) { originLat=geocoded[0].lat; originLng=geocoded[0].lng; }
 
   // Nearest-neighbor greedy sort from origin
-  const sorted = [];
-  const remaining = [...geocoded];
-  let curLat = originLat, curLng = originLng;
+  const sorted = [], remaining = [...geocoded];
+  let curLat=originLat, curLng=originLng;
   while (remaining.length) {
-    let bestIdx = 0, bestDist = Infinity;
-    remaining.forEach((j, i) => {
-      const d = Math.pow(j.lat - curLat, 2) + Math.pow(j.lng - curLng, 2);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    let bestIdx=0, bestDist=Infinity;
+    remaining.forEach((j,i) => {
+      const d = Math.pow(j.lat-curLat,2) + Math.pow(j.lng-curLng,2);
+      if (d < bestDist) { bestDist=d; bestIdx=i; }
     });
-    const next = remaining.splice(bestIdx, 1)[0];
-    sorted.push(next);
-    curLat = next.lat; curLng = next.lng;
+    const next = remaining.splice(bestIdx,1)[0];
+    sorted.push(next); curLat=next.lat; curLng=next.lng;
   }
-
-  // Append ungeocoded jobs at end (can't sort what we can't locate)
   const finalOrder = [...sorted, ...ungeocoded];
 
-  // Check if order actually changed
-  const changed = finalOrder.some((j, i) => j.id !== techJobs[i]?.id);
-  if (!changed) {
-    if (btn) btn.classList.remove('sorting');
-    toast(`${tech} is already in optimal order`);
-    return;
-  }
+  // Skip if already in correct order
+  if (!finalOrder.some((j,i) => j.id !== techJobs[i]?.id)) return false;
 
-  // Assign new rows (use existing row slots in ascending order)
-  const rowSlots = techJobs.map(j => j.row).sort((a,b) => a-b);
-  const oldRowCols = techJobs.map(j => ({ row: j.row, col: j.col, val: j.job + (j.address ? ' - ' + j.address : ''), hex: STATUS_TO_HEX[j.color] || '#ffffff' }));
-
-  // Save old values keyed by job id
+  // Write new order to sheet
+  const rowSlots = techJobs.map(j=>j.row).sort((a,b)=>a-b);
   const jobData = {};
-  techJobs.forEach(j => {
-    jobData[j.id] = { val: j.job + (j.address ? ' - ' + j.address : ''), hex: STATUS_TO_HEX[j.color] || '#ffffff' };
-  });
+  techJobs.forEach(j => { jobData[j.id] = { val: j.job+(j.address?' - '+j.address:''), hex: STATUS_TO_HEX[j.color]||'#ffffff' }; });
 
+  for (let i=0; i<finalOrder.length; i++) {
+    const j=finalOrder[i], newRow=rowSlots[i], d=jobData[j.id];
+    await sheetsSetValue(newRow, j.col, d.val);
+    await sheetsSetBackground(newRow, j.col, d.hex);
+    j.row = newRow;
+  }
+  return true;
+}
+
+// ── Morning auto-sort: runs once at 6 AM each day ──
+// Keyed by date string in localStorage so it only fires once per day
+async function runMorningSortIfNeeded() {
+  if (!canWrite) return; // only write-access users trigger the sort
+  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const key = 'wrs_sorted_' + today;
+  if (localStorage.getItem(key)) return; // already sorted today
+
+  const now = new Date();
+  const hour = now.getHours();
+  if (hour < 6) return; // before 6 AM — don't sort yet
+
+  // Mark as sorted before starting so concurrent tabs don't double-sort
+  localStorage.setItem(key, '1');
+
+  // Clean up old sort keys (keep only today's)
+  Object.keys(localStorage)
+    .filter(k => k.startsWith('wrs_sorted_') && k !== key)
+    .forEach(k => localStorage.removeItem(k));
+
+  console.log('[MorningSort] Starting daily sort at', now.toLocaleTimeString());
   isSaving = true;
-  toast(`Sorting ${tech}...`);
+  let sortedCount = 0;
   try {
-    // Write each job to its new row slot sequentially
-    for (let i = 0; i < finalOrder.length; i++) {
-      const j = finalOrder[i];
-      const newRow = rowSlots[i];
-      const d = jobData[j.id];
-      await sheetsSetValue(newRow, j.col, d.val);
-      await sheetsSetBackground(newRow, j.col, d.hex);
-      j.row = newRow; // update in memory
+    for (const tech of TECHS) {
+      const did = await autoSortTech(tech);
+      if (did) { sortedCount++; console.log('[MorningSort] Sorted', tech); }
     }
-    render(); updateMap();
-    toast(`✓ ${tech} sorted from ${originLabel}`);
+    if (sortedCount > 0) {
+      render(); updateMap();
+      toast(`✓ Morning routes set for ${sortedCount} tech${sortedCount>1?'s':''}`);
+    }
   } catch(err) {
-    toast('Sort save failed — try again');
-    console.error('autoSortTech error:', err);
+    console.error('[MorningSort] Error:', err);
+    // Remove the key so it can retry on next refresh
+    localStorage.removeItem(key);
   } finally {
     isSaving = false;
-    if (btn) btn.classList.remove('sorting');
   }
 }
 
