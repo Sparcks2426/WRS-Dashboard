@@ -1412,7 +1412,7 @@ function bindDrag() {
       }
     });
     el.addEventListener('dragleave', function() { this.classList.remove('dragover'); });
-    el.addEventListener('drop', function(e) {
+    el.addEventListener('drop', async function(e) {
       e.stopPropagation(); e.preventDefault(); this.classList.remove('dragover');
       if (!ds||this===ds) return;
       const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
