@@ -850,8 +850,10 @@ async function loadData() {
       const hex   = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
       if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
         const parsed = parseJob(v);
-        const j = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: parsed.addr, color: 'green', row: 25, col: ci+1, lat: null, lng: null };
-        if (parsed.addr && geoCache[parsed.addr]) { j.lat=geoCache[parsed.addr].lat; j.lng=geoCache[parsed.addr].lng; }
+        const shopKnownAddr = SHOP_LOCATIONS[parsed.name]?.address || '';
+        const addrKey = parsed.addr || shopKnownAddr;
+        const j = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1, lat: null, lng: null };
+        if (addrKey && geoCache[addrKey]) { j.lat=geoCache[addrKey].lat; j.lng=geoCache[addrKey].lng; }
         jobs.push(j);
         // Ensure shopVisits reflects what is in the sheet
         if (!shopVisits[TECHS[ci]]?.shop) {
@@ -966,6 +968,14 @@ async function geocodeOne(addr, retries=3) {
 }
 
 async function geocodeGreenJobs() {
+  // Pre-warm shop addresses so they're always ready
+  for (const loc of Object.values(SHOP_LOCATIONS)) {
+    if (loc.address && !geoCache[loc.address]) {
+      const c = await geocodeOne(loc.address);
+      if (c) geoCache[loc.address] = c;
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1100));
+    }
+  }
   const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat);
   for (const j of toGeo) {
     const c = await geocodeOne(j.address);
@@ -1352,6 +1362,12 @@ async function confirmShop() {
 
   const col = TECHS.indexOf(savedTech) + 1;
   if (col < 1) { toast('Tech not found'); return; }
+
+  // Pre-geocode the shop address now so the map pin appears immediately
+  if (shopAddr && !geoCache[shopAddr]) {
+    const c = await geocodeOne(shopAddr);
+    if (c) geoCache[shopAddr] = c;
+  }
 
   // Write shop ticket to row 25 (below all job/vendor rows, no conflicts)
   await sheetsClear(25, col);
