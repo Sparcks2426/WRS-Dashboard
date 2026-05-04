@@ -500,7 +500,7 @@ const geoCache = {};       // address → {lat,lng}  (session cache)
 
 // Shop state: { tech: { shop, notes } }
 const SHOP_LOCATIONS = {
-  'North Shop': { address: '111 Reed Rd, West Palm Beach, FL 33403',  lat: 26.7796, lng: -80.0708 },
+  'North Shop': { address: '111 Reed Rd, West Palm Beach, FL 33403',  lat: 26.79381, lng: -80.07287 },
   'South Shop': { address: '1770 SW 13th Ct, Pompano Beach, FL 33069', lat: 26.2124, lng: -80.1398 },
 };
 // ── Tech starting locations (home address or yard) ──
@@ -1528,8 +1528,8 @@ function bindDrag() {
 // ════════════════════════════════════════════
 function initMap() {
   if (lmap) return;
-  lmap = L.map('lmap',{zoomControl:true}).setView([26.35,-80.1],10);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(lmap);
+  lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
   markerLayer = L.layerGroup().addTo(lmap);
   routeLayer  = L.layerGroup().addTo(lmap);
 }
@@ -1671,32 +1671,47 @@ async function renderTechView() {
   }
 
 
-  // Build stops — detect shop ticket by matching job name with known shop names
+  // Build stops — shop always gets coords directly from SHOP_LOCATIONS (no geoCache needed)
   const SHOP_NAMES = Object.keys(SHOP_LOCATIONS);
   const allStops = myJobs.map((j,i)=>{
-    const isShop = SHOP_NAMES.includes(j.job);
+    const isShop = SHOP_NAMES_SET.has(j.job);
     const notes = isShop ? (shopVisits[tech]?.notes || '') : '';
-    // Pull freshest coords from geoCache first, then job object
-    const cached = j.address ? geoCache[j.address] : null;
-    const lat = cached?.lat || j.lat || null;
-    const lng = cached?.lng || j.lng || null;
+    let lat, lng;
+    if (isShop) {
+      // Always use hardcoded coords — never depend on geocache for shops
+      const shopLoc = SHOP_LOCATIONS[j.job] || SHOP_LOCATIONS[sv?.shop];
+      lat = shopLoc?.lat || null;
+      lng = shopLoc?.lng || null;
+    } else {
+      const cached = j.address ? geoCache[j.address] : null;
+      lat = cached?.lat || j.lat || null;
+      lng = cached?.lng || j.lng || null;
+    }
     return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop, jobRef:j };
   });
 
 
   // Build mapStops AFTER geocoding so all available coords are included
   const mapStops = allStops.filter(s=>s.lat&&s.lng);
-  console.log(`[Geo] ${tech}: ${mapStops.length}/${allStops.length} stops geocoded`, mapStops.map(s=>s.name));
 
   // Show map
   mapSec.style.display='';
   document.getElementById('tvMapTitle').textContent = `${tech}'s Route — ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
-  if(lmapTech){lmapTech.remove();lmapTech=null;}
-  setTimeout(()=>{ if(lmapTech) lmapTech.invalidateSize(); }, 200);
-  lmapTech = L.map('lmapTech',{zoomControl:true}).setView([26.5,-80.2],10);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(lmapTech);
-  markerLayerTech = L.layerGroup().addTo(lmapTech);
-  routeLayerTech  = L.layerGroup().addTo(lmapTech);
+
+  // Reuse existing map instance — only recreate if not yet initialised
+  // This avoids reloading all tiles on every refresh (major speed improvement)
+  if (!lmapTech) {
+    lmapTech = L.map('lmapTech',{zoomControl:true,preferCanvas:true}).setView([26.5,-80.2],10);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+      maxZoom:19, attribution:'', keepBuffer:4
+    }).addTo(lmapTech);
+    markerLayerTech = L.layerGroup().addTo(lmapTech);
+    routeLayerTech  = L.layerGroup().addTo(lmapTech);
+  } else {
+    markerLayerTech.clearLayers();
+    routeLayerTech.clearLayers();
+  }
+  setTimeout(()=>lmapTech&&lmapTech.invalidateSize(),150);
 
   const bounds=[];
   mapStops.forEach(s=>{
@@ -1900,7 +1915,7 @@ function startHeartbeat() {
 // ════════════════════════════════════════════
 //  AUTO-REFRESH
 // ════════════════════════════════════════════
-setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 30000);
+setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
 
 // ════════════════════════════════════════════
 //  TOAST
