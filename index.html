@@ -500,8 +500,8 @@ const geoCache = {};       // address → {lat,lng}  (session cache)
 
 // Shop state: { tech: { shop, notes } }
 const SHOP_LOCATIONS = {
-  'North Shop': { address: '111 Reed Rd, West Palm Beach, FL 33403' },
-  'South Shop':  { address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
+  'North Shop': { address: '111 Reed Rd, West Palm Beach, FL 33403',  lat: 26.7796, lng: -80.0708 },
+  'South Shop': { address: '1770 SW 13th Ct, Pompano Beach, FL 33069', lat: 26.2124, lng: -80.1398 },
 };
 // ── Tech starting locations (home address or yard) ──
 // Fill these in using the wrs-tech-locations.csv file provided
@@ -852,8 +852,11 @@ async function loadData() {
         const parsed = parseJob(v);
         const shopKnownAddr = SHOP_LOCATIONS[parsed.name]?.address || '';
         const addrKey = parsed.addr || shopKnownAddr;
-        const j = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1, lat: null, lng: null };
-        if (addrKey && geoCache[addrKey]) { j.lat=geoCache[addrKey].lat; j.lng=geoCache[addrKey].lng; }
+        const shopCoords = SHOP_LOCATIONS[parsed.name];
+        const j = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
+          lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
+          lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
+        if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
         jobs.push(j);
         // Ensure shopVisits reflects what is in the sheet
         if (!shopVisits[TECHS[ci]]?.shop) {
@@ -913,8 +916,8 @@ async function loadData() {
     else { render(); initMap(); updateMap(); }
     renderNotes();
 
-    // Geocode green jobs in background then refresh map
-    geocodeGreenJobs().then(() => { if (isTech && !viewingAll) renderTechView(); else updateMap(); });
+    // Geocode green jobs in background — only re-render if new coords were found
+    geocodeGreenJobs().then(anyNew => { if (anyNew) { if (isTech && !viewingAll) renderTechView(); else updateMap(); } });
 
     // Morning auto-sort: runs once after 6 AM, writes order to sheet
     runMorningSortIfNeeded();
@@ -968,20 +971,21 @@ async function geocodeOne(addr, retries=3) {
 }
 
 async function geocodeGreenJobs() {
-  // Pre-warm shop addresses so they're always ready
-  for (const loc of Object.values(SHOP_LOCATIONS)) {
-    if (loc.address && !geoCache[loc.address]) {
-      const c = await geocodeOne(loc.address);
-      if (c) geoCache[loc.address] = c;
-      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1100));
+  // Pre-populate geoCache from hardcoded shop coords — no network needed
+  for (const [name, loc] of Object.entries(SHOP_LOCATIONS)) {
+    if (loc.lat && loc.lng && loc.address) {
+      geoCache[loc.address] = { lat: loc.lat, lng: loc.lng };
     }
   }
-  const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat);
+  // Geocode regular green jobs that still lack coords
+  const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !Object.keys(SHOP_LOCATIONS).includes(j.job));
+  let anyNew = false;
   for (const j of toGeo) {
     const c = await geocodeOne(j.address);
-    if (c) { j.lat = c.lat; j.lng = c.lng; }
+    if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
     await new Promise(r => setTimeout(r, CONFIG.MAPS_API_KEY ? 50 : 1100));
   }
+  return anyNew;
 }
 
 // ════════════════════════════════════════════
@@ -1363,10 +1367,10 @@ async function confirmShop() {
   const col = TECHS.indexOf(savedTech) + 1;
   if (col < 1) { toast('Tech not found'); return; }
 
-  // Pre-geocode the shop address now so the map pin appears immediately
-  if (shopAddr && !geoCache[shopAddr]) {
-    const c = await geocodeOne(shopAddr);
-    if (c) geoCache[shopAddr] = c;
+  // Pre-populate geoCache from hardcoded shop coords — instant, no network needed
+  if (shopAddr) {
+    const shopCoords = SHOP_LOCATIONS[savedShop];
+    if (shopCoords?.lat) geoCache[shopAddr] = { lat: shopCoords.lat, lng: shopCoords.lng };
   }
 
   // Write shop ticket to row 25 (below all job/vendor rows, no conflicts)
@@ -1642,7 +1646,7 @@ async function renderTechView() {
 
 
   // Geocode all addresses — update job coords directly; allStops is built after
-  const toGeocode = myJobs.filter(j=>j.address);
+  const toGeocode = myJobs.filter(j=>j.address && !SHOP_NAMES_SET.has(j.job));
   for (const j of toGeocode) {
     if (geoCache[j.address]) {
       j.lat=geoCache[j.address].lat; j.lng=geoCache[j.address].lng;
@@ -1652,6 +1656,13 @@ async function renderTechView() {
     if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
     if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200)); // Nominatim: 1 req/sec
   }
+  // Ensure shop job always has coords from hardcoded SHOP_LOCATIONS
+  myJobs.forEach(j => {
+    if (SHOP_NAMES_SET.has(j.job)) {
+      const loc = SHOP_LOCATIONS[j.job];
+      if (loc?.lat) { j.lat = loc.lat; j.lng = loc.lng; }
+    }
+  });
 
   if (!myJobs.length) {
     mapSec.style.display='none';
@@ -1889,7 +1900,7 @@ function startHeartbeat() {
 // ════════════════════════════════════════════
 //  AUTO-REFRESH
 // ════════════════════════════════════════════
-setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
+setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 30000);
 
 // ════════════════════════════════════════════
 //  TOAST
