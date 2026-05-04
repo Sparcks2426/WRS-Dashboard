@@ -912,12 +912,12 @@ async function loadData() {
     document.getElementById('loadEl').style.display = 'none';
     document.getElementById('mainarea').style.display = 'flex';
 
-    if (isTech && !viewingAll) renderTechView();
+    if (isTech && !viewingAll) renderTechView(false);
     else { render(); initMap(); updateMap(); }
     renderNotes();
 
-    // Geocode green jobs in background — only re-render if new coords were found
-    geocodeGreenJobs().then(anyNew => { if (anyNew) { if (isTech && !viewingAll) renderTechView(); else updateMap(); } });
+    // Geocode green jobs in background, then do the full map render with all coords
+    geocodeGreenJobs().then(() => { if (isTech && !viewingAll) renderTechView(true); else updateMap(); });
 
     // Morning auto-sort: runs once after 6 AM, writes order to sheet
     runMorningSortIfNeeded();
@@ -1623,7 +1623,7 @@ function renderMapList(vj, legs, totalMin, totalMi) {
 // ════════════════════════════════════════════
 //  TECH VIEW
 // ════════════════════════════════════════════
-async function renderTechView() {
+async function renderTechView(withMap=true) {
   if (!curUser?.tech) return;
   const tech = curUser.tech;
   // Reload shop notes from localStorage
@@ -1645,16 +1645,18 @@ async function renderTechView() {
   });
 
 
-  // Geocode all addresses — update job coords directly; allStops is built after
-  const toGeocode = myJobs.filter(j=>j.address && !SHOP_NAMES_SET.has(j.job));
-  for (const j of toGeocode) {
-    if (geoCache[j.address]) {
-      j.lat=geoCache[j.address].lat; j.lng=geoCache[j.address].lng;
-      continue;
+  // Geocode all addresses — skipped on first pass (withMap=false), done by geocodeGreenJobs instead
+  if (withMap) {
+    const toGeocode = myJobs.filter(j=>j.address && !SHOP_NAMES_SET.has(j.job));
+    for (const j of toGeocode) {
+      if (geoCache[j.address]) {
+        j.lat=geoCache[j.address].lat; j.lng=geoCache[j.address].lng;
+        continue;
+      }
+      const coords = await geocodeOne(j.address);
+      if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200));
     }
-    const coords = await geocodeOne(j.address);
-    if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
-    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200)); // Nominatim: 1 req/sec
   }
   // Ensure shop job always has coords from hardcoded SHOP_LOCATIONS
   myJobs.forEach(j => {
@@ -1690,6 +1692,11 @@ async function renderTechView() {
     return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop, jobRef:j };
   });
 
+  // Always build cards immediately so the list is visible
+  buildTechCards(allStops, null, null, null, tc, dark);
+
+  // Map section — only runs after geocoding is complete (withMap=true)
+  if (!withMap) return;
 
   // Build mapStops AFTER geocoding so all available coords are included
   const mapStops = allStops.filter(s=>s.lat&&s.lng);
@@ -1749,7 +1756,6 @@ async function renderTechView() {
   } else {
     console.log(`[Route] Only ${mapStops.length} geocoded stop(s) — skipping OSRM`);
   }
-  buildTechCards(allStops, null, null, null, tc, dark);
 }
 
 function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
