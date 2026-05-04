@@ -1528,6 +1528,8 @@ function updateMap() {
   initMap();
   setTimeout(()=>lmap&&lmap.invalidateSize(),150);
 
+  const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
+
   const activeTechs=TECHS.filter(t=>tj.some(j=>j.tech===t));
   let pillH=`<button class="mfp" style="${mapTech==='all'?'background:var(--gr);color:#000':'background:var(--sf);color:var(--dm2);border:1px solid var(--bd2)'}" onclick="setMapTech('all')">ALL (${tj.length})</button>`;
   activeTechs.forEach(t=>{
@@ -1536,10 +1538,14 @@ function updateMap() {
   });
   document.getElementById('mfpills').innerHTML=pillH;
 
-  // Sort: by TECHS column order, then by row within each tech column
+  // Sort: by TECHS column order, shop first within each tech, then by row
   const sortJobs=arr=>arr.slice().sort((a,b)=>{
     const ti=TECHS.indexOf(a.tech)-TECHS.indexOf(b.tech);
-    return ti!==0?ti:(a.row||0)-(b.row||0);
+    if(ti!==0) return ti;
+    const aShop=SHOP_NAMES_SET.has(a.job)?0:1;
+    const bShop=SHOP_NAMES_SET.has(b.job)?0:1;
+    if(aShop!==bShop) return aShop-bShop;
+    return (a.row||0)-(b.row||0);
   });
   const vj=sortJobs(mapTech==='all'?tj:tj.filter(j=>j.tech===mapTech));
   markerLayer.clearLayers(); routeLayer.clearLayers(); markersArr=[];
@@ -1548,8 +1554,9 @@ function updateMap() {
     tCtr[j.tech]=(tCtr[j.tech]||0)+1;
     const num=tCtr[j.tech], tc=TC[j.tech]||'#888';
     const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
-    const icon=L.divIcon({className:'',html:`<div style="width:26px;height:26px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.6)">${num}</div>`,iconSize:[26,26],iconAnchor:[13,13]});
-    const mk=L.marker([j.lat,j.lng],{icon}).addTo(markerLayer).bindPopup(`<b>#${num} — ${j.job}</b><br><span style="color:${tc};font-weight:700">${j.tech}</span><br><small>${j.address}</small>`);
+    const isShop=SHOP_NAMES_SET.has(j.job);
+    const icon=L.divIcon({className:'',html:`<div style="width:26px;height:26px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.6)${isShop?';outline:2px solid #fff;outline-offset:1px':''}">${num}</div>`,iconSize:[26,26],iconAnchor:[13,13]});
+    const mk=L.marker([j.lat,j.lng],{icon}).addTo(markerLayer).bindPopup(`<b>#${num}${isShop?' 🏠':''} — ${j.job}</b><br><span style="color:${tc};font-weight:700">${j.tech}</span><br><small>${j.address}</small>`);
     markersArr.push({mk,lat:j.lat,lng:j.lng}); bounds.push([j.lat,j.lng]);
   });
   if(bounds.length) setTimeout(()=>lmap.fitBounds(bounds,{padding:[60,60],maxZoom:11}),200);
@@ -1618,20 +1625,15 @@ async function renderTechView() {
   });
 
 
-  // Geocode all addresses — force re-check even if j.lat set, in case geoCache has fresher data
+  // Geocode all addresses — update job coords directly; allStops is built after
   const toGeocode = myJobs.filter(j=>j.address);
   for (const j of toGeocode) {
     if (geoCache[j.address]) {
-      // Already cached — just sync to job and allStop
       j.lat=geoCache[j.address].lat; j.lng=geoCache[j.address].lng;
-      const stop=allStops.find(s=>s.jobRef===j); if(stop){stop.lat=j.lat;stop.lng=j.lng;}
       continue;
     }
     const coords = await geocodeOne(j.address);
-    if (coords) {
-      j.lat=coords.lat; j.lng=coords.lng;
-      const stop=allStops.find(s=>s.jobRef===j); if(stop){stop.lat=j.lat;stop.lng=j.lng;}
-    }
+    if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
     if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200)); // Nominatim: 1 req/sec
   }
 
