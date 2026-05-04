@@ -6,7 +6,7 @@
 <title>WRS Operations Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" id="leafletCSS" href="" data-src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
 /* ── CONFIG BANNER ── */
 #configBanner{position:fixed;top:0;left:0;right:0;background:#dc2626;color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;text-align:center;padding:6px;z-index:99999;display:none}
@@ -56,7 +56,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .topbar-brand{font-family:'DM Serif Display',serif;font-size:24px;color:#fff;letter-spacing:-0.5px;flex-shrink:0}
 .topbar-date{display:none}
 .topbar-sync{display:flex;align-items:center;gap:6px;font-size:10px;flex-shrink:0}
-.sync-dot{width:6px;height:6px;border-radius:50%;background:var(--gr);animation:pulse 2s infinite}
+.sync-dot{width:8px;height:8px;border-radius:50%;background:var(--gr);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .sync-btn{background:none;border:1px solid var(--bd2);border-radius:var(--r4);color:var(--dm2);font-family:'Inter',sans-serif;font-size:10px;font-weight:700;padding:3px 9px;cursor:pointer;transition:all .15s}
 .sync-btn:hover{border-color:var(--ac);color:var(--ac)}
@@ -84,7 +84,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .maphdr{padding:12px 18px;background:var(--sf2);border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center}
 .maphdr-left{display:flex;align-items:center;gap:10px}
 .maphdr h3{font-family:'DM Serif Display',serif;font-size:16px;color:#fff;font-weight:400;font-style:italic}
-.maptag{font-size:9px;color:var(--gr);font-weight:700;letter-spacing:1px;text-transform:uppercase;background:rgba(16,185,129,.1);padding:2px 8px;border-radius:8px;border:1px solid rgba(16,185,129,.2)}
+.maptag{font-size:11px;color:var(--gr);font-weight:700;letter-spacing:.5px;background:rgba(16,185,129,.1);padding:3px 10px;border-radius:8px;border:1px solid rgba(16,185,129,.2)}
 .mtog{background:none;border:1px solid var(--bd2);border-radius:var(--r4);color:var(--dm2);font-family:'Inter',sans-serif;font-size:10px;font-weight:700;padding:4px 10px;cursor:pointer;transition:all .15s;letter-spacing:.5px}
 .mtog:hover{border-color:var(--ac);color:var(--ac)}
 .mapwrap{display:flex;height:clamp(300px,45vh,480px)}
@@ -266,7 +266,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     <div class="topbar-brand">Waste Recycling Services Operations</div>
     <div class="topbar-sync">
       <span class="sync-dot" id="syncDot" style="background:var(--dm)"></span>
-      <span id="syncText" style="color:var(--dm2);font-size:10px;font-weight:700;letter-spacing:.5px">LOADING</span>
+      <span id="syncText" style="color:var(--dm2);font-size:13px;font-weight:800;letter-spacing:.5px">LOADING</span>
       <button class="sync-btn" onclick="loadData()">↻ SYNC</button>
     </div>
     <div class="topbar-spacer"></div>
@@ -328,6 +328,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
           <span class="maptag">LIVE</span>
         </div>
       </div>
+      <div id="tvMapDateTime" style="padding:6px 18px 10px;font-size:13px;font-weight:600;color:var(--dm2);letter-spacing:.3px;background:var(--sf2);border-bottom:1px solid var(--bd)"></div>
       <div style="width:100%;height:clamp(300px,45vh,480px);position:relative;background:var(--bg);border-radius:0 0 var(--r12) var(--r12);overflow:hidden"><div id="lmapTech" style="position:absolute;inset:0;width:100%;height:100%"></div></div>
     </div>
     <div class="tv-tickets" id="tvTickets"></div>
@@ -357,7 +358,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   </div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet loaded lazily after login -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 // ════════════════════════════════════════════════════
@@ -584,9 +585,15 @@ let shopModalTech = null, shopModalSelected = null;
     o.value = u.name; o.textContent = u.name;
     sel.appendChild(o);
   });
-  // Set map date tag
-  const mapTag = document.getElementById('mapTag');
-  if(mapTag) mapTag.textContent = new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  // Admin map date/time tag — live clock
+  function updateAdminMapTag() {
+    const mapTag = document.getElementById('mapTag');
+    if (!mapTag) return;
+    const now = new Date();
+    mapTag.textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) + ' · ' + now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+  updateAdminMapTag();
+  setInterval(updateAdminMapTag, 1000);
 
   // Load saved shop visits from localStorage (overridden by sheet on first loadData)
   try { shopVisits = JSON.parse(localStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
@@ -674,6 +681,20 @@ function doLogout() {
   document.getElementById('dashWrap').style.display = 'none';
 }
 
+// ── Lazy-load Leaflet (CSS + JS) only after login so initial page load is instant ──
+let leafletLoaded = false;
+function loadLeaflet(cb) {
+  if (leafletLoaded) { cb(); return; }
+  // Load CSS
+  const cssEl = document.getElementById('leafletCSS');
+  if (cssEl) cssEl.href = cssEl.getAttribute('data-src');
+  // Load JS
+  const s = document.createElement('script');
+  s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  s.onload = () => { leafletLoaded = true; cb(); };
+  document.head.appendChild(s);
+}
+
 function startDash(user) {
   curUser = user;
   canWrite = user.role === 'admin' || user.role === 'write';
@@ -688,7 +709,6 @@ function startDash(user) {
   const ub = document.getElementById('userbar');
   if (isTech) {
     ub.innerHTML = `<span class="uname">${user.name}</span><span class="urole read">tech</span>
-      <button class="ubtn pri" onclick="showAdminView()">All Tickets</button>
       <button class="ubtn" onclick="doLogout()">Sign Out</button>`;
   } else {
     ub.innerHTML = `<span class="uname">${user.name}</span><span class="urole ${user.role}">${user.role}</span>
@@ -702,7 +722,8 @@ function startDash(user) {
     document.getElementById('adminView').style.display = 'block';
     document.getElementById('techView').style.display  = 'none';
   }
-  loadData();
+  // Load Leaflet lazily, then fetch data (map won't block login)
+  loadLeaflet(() => { loadData(); });
   startHeartbeat();
   if (curUser.role === 'admin') checkDuplicateLogins();
 }
@@ -823,7 +844,7 @@ function colLetter(n) { let s=''; while(n>0){s=String.fromCharCode(64+(n%26||26)
 function setSyncState(state) {
   const dot = document.getElementById('syncDot'), txt = document.getElementById('syncText');
   if (state === 'syncing')  { dot.style.background='var(--yl)'; txt.textContent='SYNCING'; txt.style.color='var(--yl)'; }
-  if (state === 'ok')       { dot.style.background='var(--gr)'; txt.textContent='LIVE · '+new Date().toLocaleTimeString(); txt.style.color='var(--gr)'; }
+  if (state === 'ok')       { dot.style.background='var(--gr)'; txt.textContent='LIVE'; txt.style.color='var(--gr)'; }
   if (state === 'error')    { dot.style.background='var(--rd)'; txt.textContent='ERROR'; txt.style.color='var(--rd)'; }
 }
 
@@ -1703,7 +1724,13 @@ async function renderTechView(withMap=true) {
 
   // Show map
   mapSec.style.display='';
-  document.getElementById('tvMapTitle').textContent = `${tech}'s Route — ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
+  document.getElementById('tvMapTitle').textContent = `${tech}'s Route`;
+  // Set date/time in the dedicated datetime element
+  const dtEl = document.getElementById('tvMapDateTime');
+  if (dtEl) {
+    const now = new Date();
+    dtEl.textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) + ' · ' + now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
 
   // Reuse existing map instance — only recreate if not yet initialised
   // This avoids reloading all tiles on every refresh (major speed improvement)
@@ -1922,6 +1949,14 @@ function startHeartbeat() {
 //  AUTO-REFRESH
 // ════════════════════════════════════════════
 setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
+
+// ── Live clock for tech view datetime header ──
+setInterval(() => {
+  const dtEl = document.getElementById('tvMapDateTime');
+  if (!dtEl || dtEl.closest('#mapsecTech').style.display === 'none') return;
+  const now = new Date();
+  dtEl.textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) + ' · ' + now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}, 1000);
 
 // ════════════════════════════════════════════
 //  TOAST
