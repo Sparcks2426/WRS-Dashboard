@@ -136,6 +136,27 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .jn{font-size:13px;font-weight:700;color:var(--tx);word-break:break-word;line-height:1.3}
 .ja{font-size:11px;color:var(--dm2);margin-top:2px;display:block;word-break:break-word;line-height:1.4}
 .jnotes{font-size:15px;color:#f97316;margin-top:4px;font-style:italic;line-height:1.5;font-weight:500}
+/* ── CLICKABLE NUMBER BADGE (opens per-job note popup) ── */
+.jnumbtn{transition:transform .12s ease,box-shadow .15s ease}
+.jnumbtn:hover{transform:scale(1.15);box-shadow:0 0 0 2px rgba(255,255,255,.4),0 0 12px rgba(59,130,246,.5)}
+.jnumbtn:active{transform:scale(.95)}
+.jnumdot{position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:#f97316;border:1.5px solid #0e1320;box-shadow:0 0 6px rgba(249,115,22,.8)}
+/* ── PER-JOB NOTE POPUP ── */
+.jnotebg{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:none;backdrop-filter:blur(2px)}
+.jnotebg.show{display:block}
+.jnotepop{position:fixed;z-index:9999;background:linear-gradient(160deg,#1a2235 0%,#0f1626 100%);border:1px solid var(--bd2);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05);padding:14px;width:min(320px,calc(100vw - 24px));display:none;font-family:'Inter',sans-serif}
+.jnotepop.show{display:block}
+.jnotepop-title{font-size:11px;font-weight:700;color:var(--dm2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.jnotepop-job{font-size:13px;font-weight:700;color:var(--tx);margin-bottom:10px;line-height:1.3;word-break:break-word}
+.jnotepop textarea{width:100%;min-height:88px;background:#0a1020;border:1px solid var(--bd2);border-radius:10px;color:var(--tx);font-family:inherit;font-size:14px;padding:10px 12px;resize:vertical;line-height:1.45;outline:none;transition:border-color .15s}
+.jnotepop textarea:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+.jnotepop-actions{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+.jnotepop-btn{padding:8px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--bd2);background:#0e1320;color:var(--tx);font-family:inherit;transition:all .15s}
+.jnotepop-btn:hover{border-color:var(--ac);background:#15203a}
+.jnotepop-btn.primary{background:linear-gradient(135deg,#3b82f6,#1d4ed8);border-color:transparent;color:#fff}
+.jnotepop-btn.primary:hover{filter:brightness(1.1)}
+.jnotepop-btn.danger{color:#fca5a5;border-color:rgba(220,38,38,.3)}
+.jnotepop-btn.danger:hover{background:rgba(220,38,38,.15);border-color:#dc2626;color:#fff}
 /* ── DRAG HANDLE: larger tap target, ONLY way to start a drag ── */
 .draghandle{cursor:grab;flex-shrink:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;width:22px;height:32px;margin-top:1px;border-radius:var(--r4);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);transition:all .15s;touch-action:none;-webkit-user-select:none;user-select:none}
 .draghandle::before,.draghandle::after,.draghandle>span{content:'';display:block;width:14px;height:2px;border-radius:1px;background:var(--dm2);transition:background .15s}
@@ -220,8 +241,14 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .nc-body a.tel-link:hover{text-decoration-color:#3b82f6}
 /* ── DRIVE FOLDER BUTTONS (tech homepage) ── */
 .drive-sec{margin:18px 0}
-.drive-sec-title{font-family:'DM Serif Display',serif;font-size:16px;color:#fff;font-style:italic;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.drive-sec-title{font-family:'DM Serif Display',serif;font-size:16px;color:#fff;font-style:italic;margin-bottom:12px;display:flex;align-items:center;gap:10px;width:100%;background:linear-gradient(160deg,var(--sf2) 0%,var(--sf) 100%);border:1px solid var(--bd2);border-radius:12px;padding:14px 18px;cursor:pointer;text-align:left;transition:border-color .15s,box-shadow .2s,transform .15s}
+.drive-sec-title:hover{border-color:var(--ac);box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.drive-sec-title:active{transform:translateY(1px)}
 .drive-sec-title .driveicon{width:18px;height:18px;flex-shrink:0}
+.drive-sec-title .drive-sec-label{flex:1}
+.drive-sec-title .drive-sec-chev{width:18px;height:18px;flex-shrink:0;transition:transform .25s cubic-bezier(.2,.7,.3,1.2);opacity:.85}
+.drive-sec-title[aria-expanded="true"] .drive-sec-chev{transform:rotate(180deg)}
+.drive-sec-title[aria-expanded="true"]{margin-bottom:12px}
 .drive-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(132px,1fr))}
 .drive-btn{position:relative;background:linear-gradient(160deg,var(--sf2) 0%,var(--sf) 100%);border:1px solid var(--bd2);border-radius:14px;padding:16px 10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;text-decoration:none;display:flex;flex-direction:column;align-items:center;gap:10px;transition:transform .18s cubic-bezier(.2,.7,.3,1.2),border-color .15s,box-shadow .2s;text-align:center;min-height:108px;overflow:hidden}
 .drive-btn::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 0%,var(--db-glow,rgba(59,130,246,.18)) 0%,transparent 60%);opacity:0;transition:opacity .2s;pointer-events:none}
@@ -369,11 +396,12 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     <div class="tv-tickets" id="tvTickets"></div>
     <!-- Google Drive folder buttons (between tickets and vendor notes) -->
     <div class="drive-sec" id="tvDriveSec" style="display:none">
-      <div class="drive-sec-title">
+      <button class="drive-sec-title" id="tvDriveToggle" type="button" onclick="toggleDriveSection()" aria-expanded="false" aria-controls="tvDriveGrid">
         <svg class="driveicon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
-        Support Files
-      </div>
-      <div class="drive-grid" id="tvDriveGrid"></div>
+        <span class="drive-sec-label">Support Files</span>
+        <svg class="drive-sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="drive-grid" id="tvDriveGrid" style="display:none"></div>
     </div>
     <!-- Vendor Notes (mirrored from admin view, shown below tickets) -->
     <div class="nsec" id="tvNsec" style="display:none">
@@ -388,6 +416,22 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 <!-- Overlays for status dropdown -->
 <div class="ddo" id="ddo" onclick="closeDD()"></div>
 <div class="ddp" id="ddp"></div>
+
+<!-- Per-job note popup -->
+<div class="jnotebg" id="jnotebg" onclick="closeJobNote()"></div>
+<div class="jnotepop" id="jnotepop" role="dialog" aria-label="Job note">
+  <div class="jnotepop-title">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+    Note for this job
+  </div>
+  <div class="jnotepop-job" id="jnotepopJob"></div>
+  <textarea id="jnotepopText" placeholder="Add a note for this ticket..." onkeydown="if(event.key==='Escape'){event.preventDefault();closeJobNote();}else if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();saveJobNote();}"></textarea>
+  <div class="jnotepop-actions">
+    <button type="button" class="jnotepop-btn danger" id="jnotepopClear" onclick="clearJobNote()">Clear</button>
+    <button type="button" class="jnotepop-btn" onclick="closeJobNote()">Cancel</button>
+    <button type="button" class="jnotepop-btn primary" onclick="saveJobNote()">Save</button>
+  </div>
+</div>
 
 <!-- ── SHOP MODAL ── -->
 <div class="modal-bg" id="shopModalBg">
@@ -482,12 +526,14 @@ const HEX_TO_STATUS = {
   '#3c78d8':'blue','#3C78D8':'blue',
   '#999999':'inst','#8b5cf6':'inst','#b7b7b7':'inst','#B7B7B7':'inst',
   '#c27ba0':'pink','#C27BA0':'pink',
+  '#00ffff':'john','#00FFFF':'john','#06b6d4':'john','#06B6D4':'john',
   '#ff0000':'close','#FF0000':'close','#dc2626':'close','#DC2626':'close','#cc0000':'close','#CC0000':'close',
   '#ffffff':'none','#FFFFFF':'none',
 };
 const STATUS_TO_HEX = {
   green:'#00ff00', orange:'#ff9900', yellow:'#ffff00',
   blue:'#3c78d8',  inst:'#8b5cf6',  pink:'#c27ba0',
+  john:'#00ffff',
   close:'#dc2626', none:'#ffffff',
 };
 
@@ -979,27 +1025,42 @@ async function loadData() {
     const noteRow  = noteResp.values?.[0] || [];
 
     // ── Read shop tickets from row 25 ──
+    // Sheet is source of truth: rebuild the set of techs with shops from row 25,
+    // and only render shop-as-job cards for valid recognized shops (North/South).
+    // Anything else in row 25 (stray text, drag accidents) does not become a shop badge.
     jobs = [];
+    const sheetShopTechs = new Set();
     shopData.forEach((cell, ci) => {
       const v = cell?.userEnteredValue?.stringValue || '';
       const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
       const hex   = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
       if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
         const parsed = parseJob(v);
-        const shopKnownAddr = SHOP_LOCATIONS[parsed.name]?.address || '';
+        // Only treat as a shop if name matches a known shop location.
+        // This prevents stray content in row 25 from corrupting shopVisits.
+        if (!SHOP_LOCATIONS[parsed.name]) return;
+        const shopKnownAddr = SHOP_LOCATIONS[parsed.name].address || '';
         const addrKey = parsed.addr || shopKnownAddr;
         const shopCoords = SHOP_LOCATIONS[parsed.name];
-        const j = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
+        const tech = TECHS[ci] || 'Unknown';
+        const j = { id: -(ci+1), tech, job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
           lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
           lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
         if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
         jobs.push(j);
-        // Ensure shopVisits reflects what is in the sheet
-        if (!shopVisits[TECHS[ci]]?.shop) {
-          shopVisits[TECHS[ci]] = Object.assign(shopVisits[TECHS[ci]]||{}, { shop: parsed.name });
-        }
+        sheetShopTechs.add(tech);
+        // Sheet is source of truth — overwrite cached shop name (don't just fill if empty).
+        shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { shop: parsed.name });
       }
     });
+    // Drop stale shopVisits entries for any tech whose row 25 cell is empty/non-green.
+    // Without this, a once-set shop badge persists in localStorage forever.
+    Object.keys(shopVisits).forEach(tech => {
+      if (!sheetShopTechs.has(tech)) {
+        delete shopVisits[tech];
+      }
+    });
+    localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
 
     // ── Read shop notes from row 26 ──
     noteRow.forEach((v, ci) => {
@@ -1023,8 +1084,18 @@ async function loadData() {
         const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
         const hex = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
         const status = HEX_TO_STATUS[hex] || 'none';
-        const parsed = parseJob(val);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null };
+        // Per-job note convention: cell value can end with " ||NOTE:<text>".
+        // Split that off before parseJob so the address parser sees only the
+        // job/address portion, then re-attach the note to the job object.
+        let cellVal = val;
+        let jobNote = '';
+        const noteIdx = cellVal.indexOf(' ||NOTE:');
+        if (noteIdx !== -1) {
+          jobNote = cellVal.slice(noteIdx + 8).trim();
+          cellVal = cellVal.slice(0, noteIdx).trim();
+        }
+        const parsed = parseJob(cellVal);
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
           job.lat = geoCache[parsed.addr].lat;
           job.lng = geoCache[parsed.addr].lng;
@@ -1173,8 +1244,10 @@ function rBoard() {
         return jn === shopName || (shopAddr && ja === shopAddr);
       });
       if (matchJob) {
-        // Attach the shop notes to that job card (display only — not written to sheet)
-        matchJob.notes = sv.notes || '';
+        // Attach the shop notes to that job card (display only — not written to sheet).
+        // If the shop has no notes, preserve the job's own per-ticket note rather
+        // than overwriting it with empty string.
+        if (sv.notes) matchJob.notes = sv.notes;
         mergedShopOntoJob = true;
       }
     }
@@ -1254,8 +1327,11 @@ function jobCard(j, editable, stopNum, techColor) {
   const c = CS[j.color]||CS.none;
   const tc = techColor || c.f;
   const dark = ['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+  const hasNote = !!(j.notes && String(j.notes).trim());
   const numBadge = stopNum
-    ? `<div style="width:22px;height:22px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px">${stopNum}</div>`
+    ? (editable
+        ? `<button type="button" class="jnumbtn" onclick="event.stopPropagation();openJobNote(${j.id})" title="${hasNote?'Edit note':'Add note'}" style="width:22px;height:22px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px;border:none;cursor:pointer;padding:0;position:relative">${stopNum}${hasNote?'<span class="jnumdot"></span>':''}</button>`
+        : `<div style="width:22px;height:22px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px">${stopNum}</div>`)
     : `<span class="jsd" style="background:${c.f}"></span>`;
   return `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${c.f}">
     ${editable?'<span class="draghandle" title="Drag to reorder"><span></span></span>':''}
@@ -1399,16 +1475,35 @@ function addJ(tech) {
   const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
   render(); updateMap();
+  // Pause auto-refresh while the write is in flight; otherwise the 60s
+  // loadData() can fire before the sheet has the new value, rebuild jobs[]
+  // from the stale sheet, and silently wipe the ticket the user just typed.
+  isSaving = true;
   Promise.all([sheetsSetValue(targetRow, col, v), sheetsSetBackground(targetRow, col, '#00ff00')])
     .then(() => geocodeGreenJobs().then(()=>updateMap()))
-    .catch(()=>toast('Save failed'));
+    .catch(()=>toast('Save failed'))
+    .finally(() => {
+      isSaving = false;
+      // Confirm-refresh: re-read the sheet right after the write so what's
+      // on screen is what's actually saved. If the write silently failed,
+      // the phantom ticket disappears now instead of 60s later.
+      loadData();
+    });
 }
 
 function delJob(row, col, id) {
   if (!canWrite) return;
   jobs = jobs.filter(j=>j.id!==id);
   render(); updateMap();
-  sheetsClear(row, col).catch(()=>toast('Delete failed'));
+  // Same race-condition guard as addJ — keep auto-refresh from re-reading
+  // the sheet before the clear lands and resurrecting the deleted ticket.
+  isSaving = true;
+  sheetsClear(row, col)
+    .catch(()=>toast('Delete failed'))
+    .finally(() => {
+      isSaving = false;
+      loadData(); // confirm the delete actually persisted
+    });
 }
 
 async function swapRows(row1, col, row2) {
@@ -1442,11 +1537,90 @@ function openDD(id, el) {
 }
 function closeDD() { document.getElementById('ddp').style.display='none'; document.getElementById('ddo').style.display='none'; }
 
+// ── PER-JOB NOTES ────────────────────────────────────────────────
+// Per-job notes are appended to the cell value as " ||NOTE:<text>".
+// loadData() splits this off before parseJob() so addresses stay clean,
+// then re-attaches to the in-memory job. Writing follows the same shape.
+let _activeJobNoteId = null;
+
+function openJobNote(id) {
+  if (!canWrite) return;
+  const j = jobs.find(x => x.id === id);
+  if (!j) return;
+  _activeJobNoteId = id;
+  const pop  = document.getElementById('jnotepop');
+  const bg   = document.getElementById('jnotebg');
+  const ta   = document.getElementById('jnotepopText');
+  const lbl  = document.getElementById('jnotepopJob');
+  const clr  = document.getElementById('jnotepopClear');
+  lbl.textContent = j.job + (j.address ? ' — ' + j.address : '');
+  ta.value = j.notes || '';
+  // Hide the Clear button when there's nothing to clear
+  clr.style.display = (j.notes && String(j.notes).trim()) ? '' : 'none';
+  bg.classList.add('show');
+  pop.classList.add('show');
+  // Center on screen — simpler than anchoring to the badge and avoids
+  // overflow issues on narrow tech columns / mobile.
+  pop.style.left = '50%';
+  pop.style.top  = '50%';
+  pop.style.transform = 'translate(-50%, -50%)';
+  setTimeout(() => ta.focus(), 50);
+}
+
+function closeJobNote() {
+  document.getElementById('jnotebg').classList.remove('show');
+  document.getElementById('jnotepop').classList.remove('show');
+  _activeJobNoteId = null;
+}
+
+function _writeJobNote(j, noteText) {
+  // Reconstruct the cell value: "<job name>, <address>" + optional " ||NOTE:<text>".
+  // If parseJob returned no addr, fall back to just the job name.
+  const base = j.address ? `${j.job}, ${j.address}` : j.job;
+  const cellVal = noteText ? `${base} ||NOTE:${noteText}` : base;
+  isSaving = true;
+  return sheetsSetValue(j.row, j.col, cellVal)
+    .catch(() => toast('Save note failed'))
+    .finally(() => {
+      isSaving = false;
+      loadData(); // confirm-refresh, same pattern as addJ/delJob
+    });
+}
+
+function saveJobNote() {
+  if (_activeJobNoteId == null) return;
+  const j = jobs.find(x => x.id === _activeJobNoteId);
+  if (!j) { closeJobNote(); return; }
+  const note = (document.getElementById('jnotepopText').value || '').trim();
+  // Optimistic: update in memory and re-render immediately
+  j.notes = note;
+  closeJobNote();
+  render();
+  _writeJobNote(j, note);
+}
+
+function clearJobNote() {
+  if (_activeJobNoteId == null) return;
+  const j = jobs.find(x => x.id === _activeJobNoteId);
+  if (!j) { closeJobNote(); return; }
+  j.notes = '';
+  closeJobNote();
+  render();
+  _writeJobNote(j, '');
+}
+
 function chgColor(id, nc) {
   const j = jobs.find(x=>x.id===id); if(!j) return;
   closeDD(); j.color=nc;
   render(); updateMap();
-  sheetsSetBackground(j.row, j.col, STATUS_TO_HEX[nc]||'#ffffff').catch(()=>toast('Save failed'));
+  // Guard auto-refresh while the background-color write is pending,
+  // otherwise loadData() can race ahead, read the old cell color, and
+  // snap the ticket back to its previous status (most painful for John
+  // Follow Up — the tag would never seem to "stick").
+  isSaving = true;
+  sheetsSetBackground(j.row, j.col, STATUS_TO_HEX[nc]||'#ffffff')
+    .catch(()=>toast('Save failed'))
+    .finally(() => { isSaving = false; });
 }
 
 // ── Search ──
@@ -1594,11 +1768,21 @@ function copyVendorNote(btn, idx) {
 // Sharing: the parent folder (and ideally its contents) must be shared
 // with the Google account that's logging in — either explicitly with each
 // tech or via "anyone with link can view".
+// Collapse/expand the Support Files (Drive) section. Starts collapsed —
+// the user taps the master banner to reveal the folder buttons.
+function toggleDriveSection() {
+  const btn  = document.getElementById('tvDriveToggle');
+  const grid = document.getElementById('tvDriveGrid');
+  if (!btn || !grid) return;
+  const isOpen = btn.getAttribute('aria-expanded') === 'true';
+  btn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+  grid.style.display = isOpen ? 'none' : '';
+}
+
 async function loadDriveFolders() {
   const sec  = document.getElementById('tvDriveSec');
   const grid = document.getElementById('tvDriveGrid');
   if (!sec || !grid) return;
-
   const parentId = (CONFIG.DRIVE_PARENT_FOLDER_ID || '').trim();
   if (!parentId) {
     // Not configured yet — keep the section hidden so techs don't see an empty box
@@ -1870,6 +2054,7 @@ function bindDrag() {
         [sJob.address,tJob.address]=[tJob.address,sJob.address];
         [sJob.lat,tJob.lat]=[tJob.lat,sJob.lat];
         [sJob.lng,tJob.lng]=[tJob.lng,sJob.lng];
+        [sJob.notes,tJob.notes]=[tJob.notes,sJob.notes];
         render(); updateMap();
         swapRows(sr, parseInt(ds.dataset.col), tr).catch(()=>toast('Reorder failed'));
       } else {
@@ -1881,7 +2066,8 @@ function bindDrag() {
         let newRow = null;
         for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
         if (!newRow) { toast(`${newTech} column is full`); return; }
-        const srcVal = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
+        const srcBase = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
+        const srcVal  = sJob.notes ? `${srcBase} ||NOTE:${sJob.notes}` : srcBase;
         const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
         // Pause auto-refresh, write sheet first, then update UI
         isSaving = true;
@@ -2101,7 +2287,11 @@ async function renderTechView(withMap=true) {
     const jn = (j.job||'').trim().toLowerCase();
     const ja = (j.address||'').trim().toLowerCase();
     const matchesShopVisit = sv && sv.shop && (jn === svShopName || (svShopAddr && ja === svShopAddr));
-    const notes = (isShop || matchesShopVisit) ? (shopVisits[tech]?.notes || '') : '';
+    // Shop notes take precedence when the stop is a shop visit; otherwise
+    // show the per-job note (added via the clickable number badge).
+    const notes = (isShop || matchesShopVisit)
+      ? (shopVisits[tech]?.notes || j.notes || '')
+      : (j.notes || '');
     let lat, lng;
     if (isShop) {
       // Always use hardcoded coords — never depend on geocache for shops
@@ -2208,7 +2398,7 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
       <div style="flex:1;min-width:0;user-select:text">
         <div class="tv-job">${s.name}</div>
         ${s.addr?`<div class="tv-addr" style="margin-top:3px">📍 ${s.addr}</div>`:''}
-        ${s.isShop&&s.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:6px;line-height:1.5;font-weight:500;user-select:text">${s.notes.replace(/</g,'&lt;')}</div>`:''}
+        ${s.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:6px;line-height:1.5;font-weight:500;user-select:text">${s.notes.replace(/</g,'&lt;')}</div>`:''}
         ${leg?`<div style="font-size:11px;color:var(--gr);margin-top:4px;font-weight:600">→ Next stop: ${leg.min} min · ${leg.mi} mi</div>`:''}
       </div>
     </div>`;
