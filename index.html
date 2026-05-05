@@ -126,7 +126,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .arow{display:flex;gap:5px;padding:6px 8px;background:var(--bg);border-radius:var(--r12) var(--r12) 0 0;border-bottom:1px solid var(--bd)}
 
 /* ── JOB CARD ── */
-.jc{padding:9px 10px;border-radius:var(--r8);border-left:3px solid transparent;display:flex;align-items:flex-start;gap:7px;background:var(--sf2);cursor:grab;user-select:none;position:relative;transition:filter .12s,transform .1s}
+.jc{padding:9px 10px;border-radius:var(--r8);border-left:3px solid transparent;display:flex;align-items:flex-start;gap:7px;background:var(--sf2);cursor:default;user-select:none;position:relative;transition:filter .12s,transform .1s}
 .jn,.ja,.jnotes{user-select:text;cursor:text}
 .jc:hover{filter:brightness(1.1)}
 .jc.dragging{opacity:.3;transform:scale(.96)}
@@ -136,8 +136,12 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .jn{font-size:13px;font-weight:700;color:var(--tx);word-break:break-word;line-height:1.3}
 .ja{font-size:11px;color:var(--dm2);margin-top:2px;display:block;word-break:break-word;line-height:1.4}
 .jnotes{font-size:15px;color:#f97316;margin-top:4px;font-style:italic;line-height:1.5;font-weight:500}
-.draghandle{cursor:grab;opacity:.3;font-size:13px;flex-shrink:0;margin-top:3px;transition:opacity .12s}
-.jc:hover .draghandle{opacity:.8;color:var(--ac)}
+/* ── DRAG HANDLE: larger tap target, ONLY way to start a drag ── */
+.draghandle{cursor:grab;flex-shrink:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;width:22px;height:32px;margin-top:1px;border-radius:var(--r4);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);transition:all .15s;touch-action:none;-webkit-user-select:none;user-select:none}
+.draghandle::before,.draghandle::after,.draghandle>span{content:'';display:block;width:14px;height:2px;border-radius:1px;background:var(--dm2);transition:background .15s}
+.jc:hover .draghandle{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.4)}
+.jc:hover .draghandle::before,.jc:hover .draghandle::after,.jc:hover .draghandle>span{background:var(--ac)}
+.draghandle:active{cursor:grabbing;background:rgba(59,130,246,.25);border-color:var(--ac)}
 .db{background:none;border:none;color:rgba(255,255,255,.5);cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0;line-height:1;transition:color .12s}
 .db:hover{color:var(--rd)}
 .ct{width:20px;height:20px;border-radius:var(--r4);border:1px solid rgba(255,255,255,.4);background:transparent;cursor:pointer;padding:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.4);transition:all .12s}
@@ -232,6 +236,13 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   <span style="cursor:pointer;opacity:.7" onclick="document.getElementById('dupeBanner').style.display='none'">✕ Dismiss</span>
 </div>
 
+<!-- ── SESSION EXPIRED / RE-LOGIN BANNER ── -->
+<div id="relogBanner" style="display:none;position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;font-family:Inter,sans-serif;font-size:13px;font-weight:700;text-align:center;padding:10px 16px;z-index:99999;letter-spacing:.3px;box-shadow:0 4px 16px rgba(0,0,0,.4)">
+  🔒 <span id="relogBannerMsg">Your Google session has expired — please re-login to continue syncing.</span>
+  &nbsp;
+  <button id="relogBtn" onclick="doRelog()" style="background:#fff;color:#b91c1c;border:none;border-radius:6px;font-family:Inter,sans-serif;font-size:12px;font-weight:800;padding:5px 14px;cursor:pointer;margin-left:8px;letter-spacing:.5px">RE-LOGIN NOW</button>
+</div>
+
 <!-- Session detail modal -->
 <div id="sessionModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100000;align-items:center;justify-content:center">
   <div style="background:#0e1320;border:1px solid #253048;border-radius:16px;padding:28px;width:100%;max-width:640px;max-height:80vh;overflow-y:auto;box-shadow:0 32px 80px rgba(0,0,0,.8)">
@@ -308,14 +319,15 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     <div class="mainarea" id="mainarea" style="display:none">
       <div class="boardwrap"><div class="board" id="board"></div></div>
     </div>
-    <!-- Special Columns: JP Review, John Follow Up, Follow Up, Parts Needed, Quote Needed -->
-    <div class="spcols" id="spcols"></div>
 
-    <!-- Vendor Notes -->
+    <!-- Vendor Notes (moved up — now directly below the tech job board) -->
     <div class="nsec" id="nsec">
       <div class="nsec-title">Vendor Notes</div>
       <div class="ngrid" id="ngrid"></div>
     </div>
+
+    <!-- Special Columns: JP Review, John Follow Up, Follow Up, Quote Needed -->
+    <div class="spcols" id="spcols"></div>
   </div>
 
   <!-- Tech View -->
@@ -617,6 +629,43 @@ document.getElementById('loginPin').addEventListener('keydown', e => { if(e.key=
 // ════════════════════════════════════════════
 let tokenClient = null;
 let tokenReadyCb = null;
+let tokenAcquiredAt = 0;       // ms timestamp of last successful token
+const TOKEN_LIFETIME_MS = 60 * 60 * 1000; // Google access tokens last ~60 min
+
+function showRelogBanner(msg) {
+  const b = document.getElementById('relogBanner');
+  if (!b) return;
+  if (msg) document.getElementById('relogBannerMsg').textContent = msg;
+  b.style.display = 'block';
+  // Push the dashboard down so the banner doesn't cover content
+  document.body.style.paddingTop = b.offsetHeight + 'px';
+  setSyncState('error');
+}
+function hideRelogBanner() {
+  const b = document.getElementById('relogBanner');
+  if (!b) return;
+  b.style.display = 'none';
+  document.body.style.paddingTop = '';
+}
+
+// User clicks "Re-login Now" — request a token with the consent prompt
+function doRelog() {
+  ensureTokenClient();
+  // Use prompt:'' first (silent), fall back is built into GIS automatically
+  // when the silent flow fails it will surface the popup
+  tokenReadyCb = () => {
+    hideRelogBanner();
+    setSyncState('ok');
+    toast('✓ Re-authenticated');
+    // Resume normal sync
+    if (typeof loadData === 'function') loadData();
+  };
+  try {
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  } catch(e) {
+    console.error('Relog failed:', e);
+  }
+}
 
 function ensureTokenClient() {
   if (tokenClient) return;
@@ -624,8 +673,16 @@ function ensureTokenClient() {
     client_id: CONFIG.CLIENT_ID,
     scope: 'https://www.googleapis.com/auth/spreadsheets',
     callback: resp => {
-      if (resp.error) { setSyncState('error'); return; }
+      if (resp.error) {
+        // Silent refresh failed — surface the relog banner
+        console.warn('OAuth callback error:', resp.error);
+        showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+        setSyncState('error');
+        return;
+      }
       gAccessToken = resp.access_token;
+      tokenAcquiredAt = Date.now();
+      hideRelogBanner();
       if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
     },
   });
@@ -644,12 +701,24 @@ function acquireToken(cb) {
 }
 
 // ── Silent token refresh every 45 min (tokens last ~60 min) ──
+// Plus a watchdog that triggers the relog banner if a refresh hasn't
+// succeeded in the last 55 min.
 function scheduleTokenRefresh() {
   setInterval(() => {
     if (!curUser) return; // not logged in, nothing to refresh
     ensureTokenClient();
     tokenClient.requestAccessToken({ prompt: '' }); // always silent — no consent screen
   }, 45 * 60 * 1000);
+
+  // Watchdog: every 60s, check if our token is older than its lifetime.
+  // If yes, surface the relog banner so the user knows to re-auth.
+  setInterval(() => {
+    if (!curUser || !tokenAcquiredAt) return;
+    const age = Date.now() - tokenAcquiredAt;
+    if (age > TOKEN_LIFETIME_MS - 5*60*1000) { // 5 min before expiry
+      showRelogBanner('Your Google session is about to expire — please re-login to keep syncing.');
+    }
+  }, 60 * 1000);
 }
 scheduleTokenRefresh();
 
@@ -758,6 +827,7 @@ async function sheetsGet(range) {
     // Token expired — silently refresh then retry once
     await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
     r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
   }
   if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
   return r.json();
@@ -777,6 +847,7 @@ async function sheetsGetFormatting(range) {
   if (r.status === 401) {
     await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
     r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
   }
   if (!r.ok) {
     const txt = await r.text().catch(()=>'');
@@ -1076,13 +1147,12 @@ function rBoard() {
   if (canWrite) bindDrag();
 }
 
-// Special columns: JP Review, John Follow Up, Follow Up, Parts Needed, Quote Needed
+// Special columns: JP Review, John Follow Up, Follow Up, Quote Needed
 function rSpecialCols() {
   const SCOLS = [
     { key:'pink',   label:'JP Review',      color:'#ec4899' },
     { key:'john',   label:'John Follow Up', color:'#06b6d4' },
     { key:'orange', label:'Follow Up',      color:'#f97316' },
-    { key:'blue',   label:'Parts Needed',   color:'#3b82f6' },
     { key:'yellow', label:'Quote Needed',   color:'#eab308' },
   ];
   let h = '';
@@ -1119,8 +1189,8 @@ function jobCard(j, editable, stopNum, techColor) {
   const numBadge = stopNum
     ? `<div style="width:22px;height:22px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px">${stopNum}</div>`
     : `<span class="jsd" style="background:${c.f}"></span>`;
-  return `<div class="jc" draggable="${editable}" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${c.f}">
-    ${editable?'<span class="draghandle">☰</span>':''}
+  return `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${c.f}">
+    ${editable?'<span class="draghandle" title="Drag to reorder"><span></span></span>':''}
     ${numBadge}
     <div class="jinfo">
       <span class="jn">${j.job}</span>
@@ -1327,7 +1397,7 @@ function renderNotes() {
       body: `Upon arrival:\n1- Tech to text John Kilfara cell 978-735-5423. Include store number, city, & state.\n2- Authorization of work to be performed (regardless of NTE)\n3- NTE increase needed - pictures must be provided via text or email.`
     },
     {
-      header: 'Synergy Verisae',
+      header: "Synergy BJ's Verisae",
       color: '#10b981',
       body: `Username: Repairs@synergywastegroup.com\nPassword: Repairs2025!`
     },
@@ -1340,6 +1410,16 @@ function renderNotes() {
       header: 'A-Prime',
       color: '#8b5cf6',
       body: `Please call or text 781-389-2810 to check in and out.`
+    },
+    {
+      header: 'Winn-Dixie',
+      color: '#dc2626',
+      body: `Check in and out of service channel\nPin\nTracking`
+    },
+    {
+      header: 'Whole Foods',
+      color: '#06b6d4',
+      body: `Check in and out of Corrigo Pro. If unable to login contact the office`
     },
   ];
   document.getElementById('nsec').style.display='';
@@ -1439,14 +1519,21 @@ document.getElementById('shopModalBg').addEventListener('click', function(e) {
 // ════════════════════════════════════════════
 function bindDrag() {
   let ds = null;
-  document.querySelectorAll('.jc[draggable="true"]').forEach(el => {
+  document.querySelectorAll('.jc').forEach(el => {
     const handle = el.querySelector('.draghandle');
-    if (handle) {
-      handle.addEventListener('mousedown', ()=>el.draggable=true);
-      handle.addEventListener('mouseup',   ()=>el.draggable=false);
-    }
+    if (!handle) return; // No handle = not editable, skip entirely
+
+    // Only the handle arms the card for dragging. Mouse + touch.
+    const arm    = () => { el.draggable = true; };
+    const disarm = () => { el.draggable = false; };
+    handle.addEventListener('mousedown',  arm);
+    handle.addEventListener('touchstart', arm, {passive:true});
+    document.addEventListener('mouseup',  disarm);
+    document.addEventListener('touchend', disarm);
+
     el.addEventListener('dragstart', function(e) {
-      if (!el.querySelector('.draghandle')) { e.preventDefault(); return; }
+      // Hard guard: if the card wasn't armed via the handle, abort.
+      if (!el.draggable) { e.preventDefault(); return; }
       ds=this; this.classList.add('dragging');
       e.dataTransfer.setData('text/plain','x'); e.dataTransfer.effectAllowed='move';
     });
