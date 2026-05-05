@@ -1120,19 +1120,43 @@ function rBoard() {
     if (search && !tj.length) return;
     const tc = TC[tech]||'#888';
     const sv = shopVisits[tech];
+
+    // ── If a shop visit exists, look for a matching draggable job ticket
+    // (same shop name or same shop address) and attach the notes to that
+    // card instead of rendering a separate standalone shop card. This
+    // prevents the "double ticket" issue Jon-Pol reported.
+    let mergedShopOntoJob = false;
+    if (sv && sv.shop) {
+      const shopAddr = (SHOP_LOCATIONS[sv.shop]?.address || '').trim().toLowerCase();
+      const shopName = sv.shop.trim().toLowerCase();
+      const matchJob = tj.find(j => {
+        const jn = (j.job || '').trim().toLowerCase();
+        const ja = (j.address || '').trim().toLowerCase();
+        return jn === shopName || (shopAddr && ja === shopAddr);
+      });
+      if (matchJob) {
+        // Attach the shop notes to that job card (display only — not written to sheet)
+        matchJob.notes = sv.notes || '';
+        mergedShopOntoJob = true;
+      }
+    }
+
     // Header: add row at TOP, then jobs
     h += `<div class="tcol">`;
     // Add row at top
     if (canWrite) h += `<div class="arow"><input class="ainp" placeholder="New ticket…" id="ai_${tech}" onkeydown="if(event.key==='Enter')addJ('${tech}')"><button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJ('${tech}')">+</button></div>`;
+    // Count: if we merged onto an existing job, the shop is NOT a separate card,
+    // so don't add +1 to the count.
+    const shopCount = (sv && sv.shop && !mergedShopOntoJob) ? 1 : 0;
     h += `<div class="thdr">
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
       ${sv && sv.shop ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
-      <span class="tcnt">${tj.length + (sv && sv.shop?1:0)}</span>
+      <span class="tcnt">${tj.length + shopCount}</span>
     </div>
     <div class="tjobs" data-tech="${tech}">`;
-    // Shop card first if set — always stop #1
+    // Standalone shop card — ONLY if there was no matching draggable ticket to merge onto.
     let stopOffset = 0;
-    if (sv && sv.shop) {
+    if (sv && sv.shop && !mergedShopOntoJob) {
       stopOffset = 1;
       const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
       const dark = ['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
@@ -1200,6 +1224,7 @@ function jobCard(j, editable, stopNum, techColor) {
     ${numBadge}
     <div class="jinfo">
       <span class="jn">${j.job}</span>
+      ${j.notes?`<span class="jnotes">${String(j.notes).replace(/</g,'&lt;')}</span>`:''}
       ${j.address?`<span class="ja">📍 ${j.address}</span>`:''}
     </div>
     ${editable?`<button class="db" onclick="event.stopPropagation();delJob(${j.row},${j.col},${j.id})">✕</button>
@@ -1802,9 +1827,18 @@ async function renderTechView(withMap=true) {
 
   // Build stops — shop always gets coords directly from SHOP_LOCATIONS (no geoCache needed)
   const SHOP_NAMES = Object.keys(SHOP_LOCATIONS);
+  // The tech's configured shop visit (if any) — used to attach notes to a
+  // matching draggable ticket so we don't render a separate "double ticket".
+  const svShopAddr = (sv?.shop && SHOP_LOCATIONS[sv.shop]?.address || '').trim().toLowerCase();
+  const svShopName = (sv?.shop || '').trim().toLowerCase();
   const allStops = myJobs.map((j,i)=>{
     const isShop = SHOP_NAMES_SET.has(j.job);
-    const notes = isShop ? (shopVisits[tech]?.notes || '') : '';
+    // Notes attach if the job IS a known shop OR if the job's name/address
+    // matches the tech's currently-configured shop visit.
+    const jn = (j.job||'').trim().toLowerCase();
+    const ja = (j.address||'').trim().toLowerCase();
+    const matchesShopVisit = sv && sv.shop && (jn === svShopName || (svShopAddr && ja === svShopAddr));
+    const notes = (isShop || matchesShopVisit) ? (shopVisits[tech]?.notes || '') : '';
     let lat, lng;
     if (isShop) {
       // Always use hardcoded coords — never depend on geocache for shops
@@ -1816,7 +1850,7 @@ async function renderTechView(withMap=true) {
       lat = cached?.lat || j.lat || null;
       lng = cached?.lng || j.lng || null;
     }
-    return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop, jobRef:j };
+    return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop:(isShop||matchesShopVisit), jobRef:j };
   });
 
   // Always build cards immediately so the list is visible
