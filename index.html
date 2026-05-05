@@ -443,7 +443,6 @@ const USERS = [
   { name:'Maikol',            pin:'1520', role:'read', tech:'Maikol'    },
   { name:'Jesse',             pin:'1488', role:'read', tech:'Jesse'     },
   { name:'Landon',            pin:'2535', role:'read', tech:'Landon'    },
-
 ];
 
 // ── Sheet Structure ──
@@ -701,4 +700,1620 @@ function doRelog() {
   };
   try {
     tokenClient.requestAccessToken({ prompt: 'consent' });
-  } ca
+  } catch(e) {
+    console.error('Relog failed:', e);
+  }
+}
+
+function ensureTokenClient() {
+  if (tokenClient) return;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CONFIG.CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly',
+    callback: resp => {
+      if (resp.error) {
+        // Silent refresh failed — surface the relog banner
+        console.warn('OAuth callback error:', resp.error);
+        showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+        setSyncState('error');
+        return;
+      }
+      gAccessToken = resp.access_token;
+      tokenAcquiredAt = Date.now();
+      hideRelogBanner();
+      if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
+    },
+  });
+}
+
+function acquireToken(cb) {
+  // Wait for GIS to be available
+  const tryAcquire = () => {
+    if (!window.google || !window.google.accounts) { setTimeout(tryAcquire, 200); return; }
+    ensureTokenClient();
+    if (gAccessToken) { cb(); return; }
+    tokenReadyCb = cb;
+    tokenClient.requestAccessToken({ prompt: '' }); // silent if possible
+  };
+  tryAcquire();
+}
+
+// ── Silent token refresh every 45 min (tokens last ~60 min) ──
+// Plus a watchdog that triggers the relog banner if a refresh hasn't
+// succeeded in the last 55 min.
+function scheduleTokenRefresh() {
+  setInterval(() => {
+    if (!curUser) return; // not logged in, nothing to refresh
+    ensureTokenClient();
+    tokenClient.requestAccessToken({ prompt: '' }); // always silent — no consent screen
+  }, 45 * 60 * 1000);
+
+  // Watchdog: every 60s, check if our token is older than its lifetime.
+  // If yes, surface the relog banner so the user knows to re-auth.
+  setInterval(() => {
+    if (!curUser || !tokenAcquiredAt) return;
+    const age = Date.now() - tokenAcquiredAt;
+    if (age > TOKEN_LIFETIME_MS - 5*60*1000) { // 5 min before expiry
+      showRelogBanner('Your Google session is about to expire — please re-login to keep syncing.');
+    }
+  }, 60 * 1000);
+}
+scheduleTokenRefresh();
+
+// ════════════════════════════════════════════
+//  LOGIN / LOGOUT
+// ════════════════════════════════════════════
+function doLogin() {
+  const name = document.getElementById('loginName').value;
+  const pin  = document.getElementById('loginPin').value;
+  const err  = document.getElementById('loginErr');
+  const btn  = document.getElementById('loginBtn');
+  if (!name || !pin) { err.textContent = 'Select name and enter PIN'; return; }
+  const user = USERS.find(u => u.name === name && u.pin === pin);
+  if (!user) { err.textContent = 'Invalid name or PIN'; document.getElementById('loginPin').value=''; return; }
+  btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
+  acquireToken(() => {
+    btn.disabled = false; btn.textContent = 'Sign In →';
+    const authData = { name: user.name, role: user.role, tech: user.tech || '', saved: Date.now() };
+    localStorage.setItem('wrs_user', JSON.stringify(authData));
+    startDash({ name: user.name, role: user.role, tech: user.tech || '' });
+  });
+}
+
+function doLogout() {
+  if (gAccessToken) { google.accounts.oauth2.revoke(gAccessToken); gAccessToken = null; }
+  localStorage.removeItem('wrs_user');
+  curUser = null; canWrite = false; isTech = false; viewingAll = false;
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('dashWrap').style.display = 'none';
+}
+
+// ── Lazy-load Leaflet (CSS + JS) only after login so initial page load is instant ──
+let leafletLoaded = false;
+function loadLeaflet(cb) {
+  if (leafletLoaded) { cb(); return; }
+  // Load CSS
+  const cssEl = document.getElementById('leafletCSS');
+  if (cssEl) cssEl.href = cssEl.getAttribute('data-src');
+  // Load JS
+  const s = document.createElement('script');
+  s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  s.onload = () => { leafletLoaded = true; cb(); };
+  document.head.appendChild(s);
+}
+
+function startDash(user) {
+  curUser = user;
+  canWrite = user.role === 'admin' || user.role === 'write';
+  isTech   = user.role === 'read' && !!user.tech && TECHS.includes(user.tech);
+  viewingAll = false;
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('dashWrap').style.display = 'block';
+  if (!canWrite) document.getElementById('dashWrap').classList.add('readonly');
+  else           document.getElementById('dashWrap').classList.remove('readonly');
+
+  // Userbar
+  const ub = document.getElementById('userbar');
+  if (isTech) {
+    ub.innerHTML = `<span class="uname">${user.name}</span><span class="urole read">tech</span>
+      <button class="ubtn" onclick="doLogout()">Sign Out</button>`;
+  } else {
+    ub.innerHTML = `<span class="uname">${user.name}</span><span class="urole ${user.role}">${user.role}</span>
+      <button class="ubtn" onclick="doLogout()">Sign Out</button>`;
+  }
+
+  if (isTech) {
+    document.getElementById('adminView').style.display = 'none';
+    document.getElementById('techView').style.display  = 'block';
+  } else {
+    document.getElementById('adminView').style.display = 'block';
+    document.getElementById('techView').style.display  = 'none';
+  }
+  // Load Leaflet lazily, then fetch data (map won't block login)
+  loadLeaflet(() => { loadData(); });
+  startHeartbeat();
+  if (curUser.role === 'admin') checkDuplicateLogins();
+}
+
+function showAdminView() {
+  viewingAll = true;
+  document.getElementById('adminView').style.display = 'block';
+  document.getElementById('techView').style.display  = 'none';
+  const fsb = document.getElementById('fullSchedBtn');
+  if (fsb) fsb.style.display = isTech ? 'block' : 'none';
+  render(); initMap(); updateMap();
+}
+// Toolbar button for tech to see full schedule (mobile)
+function openFullSchedule() {
+  showAdminView();
+}
+
+function backToTechView() {
+  viewingAll = false;
+  document.getElementById('adminView').style.display = 'none';
+  document.getElementById('techView').style.display  = 'block';
+  renderTechView();
+}
+
+// ════════════════════════════════════════════
+//  SHEETS API HELPERS
+// ════════════════════════════════════════════
+async function sheetsGet(range) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}`;
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (r.status === 401) {
+    // Token expired — silently refresh then retry once
+    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+  }
+  if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
+  return r.json();
+}
+
+async function sheetsBatchGet(ranges) {
+  const qs = ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values:batchGet?${qs}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (!r.ok) throw new Error(`Sheets batchGet failed: ${r.status}`);
+  return r.json();
+}
+
+async function sheetsGetFormatting(range) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat(backgroundColor)))))`;
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (r.status === 401) {
+    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+  }
+  if (!r.ok) {
+    const txt = await r.text().catch(()=>'');
+    throw new Error(`Sheets formatting failed: ${r.status} ${txt.substring(0,100)}`);
+  }
+  return r.json();
+}
+
+async function sheetsSetBackground(row, col, hexColor) {
+  // row/col are 1-based
+  const body = {
+    requests: [{
+      repeatCell: {
+        range: { sheetId: 0, startRowIndex: row-1, endRowIndex: row, startColumnIndex: col-1, endColumnIndex: col },
+        cell: { userEnteredFormat: { backgroundColor: hexToRgb(hexColor) } },
+        fields: 'userEnteredFormat.backgroundColor',
+      }
+    }]
+  };
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}:batchUpdate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function sheetsSetValue(row, col, value) {
+  const range = `Sheet1!${colLetter(col)}${row}`;
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [[value]] }),
+  });
+  if (!r.ok) throw new Error(`sheetsSetValue failed: ${r.status}`);
+}
+
+async function sheetsClear(row, col) {
+  const range = `Sheet1!${colLetter(col)}${row}`;
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gAccessToken}` },
+  });
+  if (!r.ok) throw new Error(`sheetsClear failed: ${r.status}`);
+  await sheetsSetBackground(row, col, '#ffffff');
+}
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+  return { red: r, green: g, blue: b };
+}
+function rgbToHex(rgb) {
+  try {
+    if (!rgb || typeof rgb !== 'object') return '#ffffff';
+    const r = Math.round(((rgb.red)||0)*255);
+    const g = Math.round(((rgb.green)||0)*255);
+    const b = Math.round(((rgb.blue)||0)*255);
+    return '#' + [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+  } catch(e) { return '#ffffff'; }
+}
+function colLetter(n) { let s=''; while(n>0){s=String.fromCharCode(64+(n%26||26))+s;n=Math.floor((n-1)/26);} return s; }
+
+// ════════════════════════════════════════════
+//  DATA LOADING
+// ════════════════════════════════════════════
+function setSyncState(state) {
+  const dot = document.getElementById('syncDot'), txt = document.getElementById('syncText');
+  if (state === 'syncing')  { dot.style.background='var(--yl)'; txt.textContent='SYNCING'; txt.style.color='var(--yl)'; }
+  if (state === 'ok')       { dot.style.background='var(--gr)'; txt.textContent='LIVE'; txt.style.color='var(--gr)'; }
+  if (state === 'error')    { dot.style.background='var(--rd)'; txt.textContent='ERROR'; txt.style.color='var(--rd)'; }
+}
+
+async function loadData() {
+  setSyncState('syncing');
+  try {
+    // ── Fetch jobs + vendor notes (rows 6-23), NO shop rows ──
+    // Range A6:K23 → sheetData index 0 = row 6
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
+    const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
+
+    // ── Fetch shop rows 25-26 separately (values only, no formatting needed for row 26) ──
+    // Row 25 = shop ticket (green cell), Row 26 = SHOPNOTE text
+    const shopFmt  = await sheetsGetFormatting(`Sheet1!A25:K25`);
+    const shopData = shopFmt.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
+    const noteResp = await sheetsGet(`Sheet1!A26:K26`);
+    const noteRow  = noteResp.values?.[0] || [];
+
+    // ── Read shop tickets from row 25 ──
+    jobs = [];
+    shopData.forEach((cell, ci) => {
+      const v = cell?.userEnteredValue?.stringValue || '';
+      const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
+      const hex   = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
+      if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
+        const parsed = parseJob(v);
+        const shopKnownAddr = SHOP_LOCATIONS[parsed.name]?.address || '';
+        const addrKey = parsed.addr || shopKnownAddr;
+        const shopCoords = SHOP_LOCATIONS[parsed.name];
+        const j = { id: -(ci+1), tech: TECHS[ci]||'Unknown', job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
+          lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
+          lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
+        if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
+        jobs.push(j);
+        // Ensure shopVisits reflects what is in the sheet
+        if (!shopVisits[TECHS[ci]]?.shop) {
+          shopVisits[TECHS[ci]] = Object.assign(shopVisits[TECHS[ci]]||{}, { shop: parsed.name });
+        }
+      }
+    });
+
+    // ── Read shop notes from row 26 ──
+    noteRow.forEach((v, ci) => {
+      if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
+        const tech = TECHS[ci];
+        if (tech) {
+          const notes = v.replace('SHOPNOTE:', '');
+          shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
+        }
+      }
+    });
+
+    // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
+    let id = 1;
+    for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
+      const rowData = sheetData[r]?.values || [];
+      for (let c = 0; c < 11; c++) {
+        const cell = rowData[c];
+        const val = cell?.userEnteredValue?.stringValue || cell?.userEnteredValue?.formulaValue || '';
+        if (!val || !val.trim()) continue;
+        const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
+        const hex = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
+        const status = HEX_TO_STATUS[hex] || 'none';
+        const parsed = parseJob(val);
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null };
+        if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
+          job.lat = geoCache[parsed.addr].lat;
+          job.lng = geoCache[parsed.addr].lng;
+        }
+        jobs.push(job);
+      }
+    }
+
+    // ── Vendor notes (rows 19-23, sheetData index 13-17) ──
+    vendorNotes = [];
+    for (let r = 13; r < 18; r++) {
+      const rowData = sheetData[r]?.values || [];
+      for (let c = 0; c < 11; c++) {
+        const cell = rowData[c];
+        const val = cell?.userEnteredValue?.stringValue || '';
+        if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
+      }
+    }
+
+    setSyncState('ok');
+    document.getElementById('loadEl').style.display = 'none';
+    document.getElementById('mainarea').style.display = 'flex';
+
+    if (isTech && !viewingAll) renderTechView(false);
+    else { render(); initMap(); updateMap(); }
+    renderNotes();
+
+    // Geocode green jobs in background, then do the full map render with all coords
+    geocodeGreenJobs().then(() => { if (isTech && !viewingAll) renderTechView(true); else updateMap(); });
+
+    // Morning auto-sort: runs once after 6 AM, writes order to sheet
+    runMorningSortIfNeeded();
+
+  } catch(e) {
+    setSyncState('error');
+    console.error(e);
+    toast('Sync failed — ' + e.message);
+  }
+}
+
+function parseJob(raw) {
+  const val = String(raw).trim();
+  const parts = val.split(',');
+  let name = val, addr = '';
+  if (parts.length >= 3) { name = parts[0].trim(); addr = parts.slice(1).join(',').trim(); }
+  if (!addr) addr = LOC[name] || LOC[val] || '';
+  return { name, addr };
+}
+
+// ════════════════════════════════════════════
+//  GEOCODING (Nominatim, serialised, cached)
+// ════════════════════════════════════════════
+async function geocodeOne(addr, retries=3) {
+  if (geoCache[addr]) return geoCache[addr];
+  if (CONFIG.MAPS_API_KEY) {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&key=${CONFIG.MAPS_API_KEY}`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d.status==='OK' && d.results[0]) {
+      const loc = d.results[0].geometry.location;
+      geoCache[addr] = { lat: loc.lat, lng: loc.lng };
+      return geoCache[addr];
+    }
+    return null;
+  }
+  // Free Nominatim with retry + backoff
+  for (let attempt=0; attempt<retries; attempt++) {
+    try {
+      if (attempt > 0) await new Promise(r=>setTimeout(r, 1500 * attempt));
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(addr)}`;
+      const r = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(6000) });
+      const d = await r.json();
+      if (d && d.length) {
+        geoCache[addr] = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+        return geoCache[addr];
+      }
+    } catch(e) { /* retry */ }
+  }
+  return null;
+}
+
+async function geocodeGreenJobs() {
+  // Pre-populate geoCache from hardcoded shop coords — no network needed
+  for (const [name, loc] of Object.entries(SHOP_LOCATIONS)) {
+    if (loc.lat && loc.lng && loc.address) {
+      geoCache[loc.address] = { lat: loc.lat, lng: loc.lng };
+    }
+  }
+  // Geocode regular green jobs that still lack coords
+  const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !Object.keys(SHOP_LOCATIONS).includes(j.job));
+  let anyNew = false;
+  for (const j of toGeo) {
+    const c = await geocodeOne(j.address);
+    if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
+    await new Promise(r => setTimeout(r, CONFIG.MAPS_API_KEY ? 50 : 1100));
+  }
+  return anyNew;
+}
+
+// ════════════════════════════════════════════
+//  RENDER — ADMIN VIEW
+// ════════════════════════════════════════════
+function render() { rLeg(); rBoard(); rSpecialCols(); }
+
+function rLeg() {
+  document.getElementById('legend').innerHTML =
+    `<div class="lpill" style="color:var(--dm2);background:var(--sf);border:1px solid var(--bd);${!activeFilters.size?'border-color:var(--ac)':''}" onclick="resetFilters()"><span class="ld" style="background:var(--dm2)"></span>ALL</div>` +
+    SO.map(c=>`<div class="lpill" style="color:${CS[c].f};background:${CS[c].b};${activeFilters.has(c)?'border-color:'+CS[c].f:''}" onclick="toggleFilt('${c}')"><span class="ld" style="background:${CS[c].f}"></span>${SL[c]}</div>`).join('');
+}
+
+function resetFilters()       { activeFilters.clear(); statFilter=null; render(); }
+function toggleFilt(c)        { activeFilters.has(c)?activeFilters.delete(c):activeFilters.add(c); render(); }
+
+function getFiltered() {
+  // Main board only shows green + inst (active work)
+  return jobs.filter(j => {
+    if (['pink','john','orange','yellow','blue','close'].includes(j.color)) return false;
+    if (search) { const s=search.toLowerCase(); if(!j.job.toLowerCase().includes(s)&&!j.tech.toLowerCase().includes(s)&&!j.address.toLowerCase().includes(s)) return false; }
+    if (activeFilters.size && !activeFilters.has(j.color)) return false;
+    if (statFilter && j.color!==statFilter) return false;
+    return true;
+  });
+}
+
+function rBoard() {
+  const fj = getFiltered();
+  let h = '';
+  const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : TECHS;
+  visibleTechs.forEach(tech => {
+    const tj = fj.filter(j => j.tech===tech);
+    if (search && !tj.length) return;
+    const tc = TC[tech]||'#888';
+    const sv = shopVisits[tech];
+
+    // ── If a shop visit exists, look for a matching draggable job ticket
+    // (same shop name or same shop address) and attach the notes to that
+    // card instead of rendering a separate standalone shop card. This
+    // prevents the "double ticket" issue Jon-Pol reported.
+    let mergedShopOntoJob = false;
+    if (sv && sv.shop) {
+      const shopAddr = (SHOP_LOCATIONS[sv.shop]?.address || '').trim().toLowerCase();
+      const shopName = sv.shop.trim().toLowerCase();
+      const matchJob = tj.find(j => {
+        const jn = (j.job || '').trim().toLowerCase();
+        const ja = (j.address || '').trim().toLowerCase();
+        return jn === shopName || (shopAddr && ja === shopAddr);
+      });
+      if (matchJob) {
+        // Attach the shop notes to that job card (display only — not written to sheet)
+        matchJob.notes = sv.notes || '';
+        mergedShopOntoJob = true;
+      }
+    }
+
+    // Header: add row at TOP, then jobs
+    h += `<div class="tcol">`;
+    // Add row at top
+    if (canWrite) h += `<div class="arow"><input class="ainp" placeholder="New ticket…" id="ai_${tech}" onkeydown="if(event.key==='Enter')addJ('${tech}')"><button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJ('${tech}')">+</button></div>`;
+    // Count: if we merged onto an existing job, the shop is NOT a separate card,
+    // so don't add +1 to the count.
+    const shopCount = (sv && sv.shop && !mergedShopOntoJob) ? 1 : 0;
+    h += `<div class="thdr">
+      <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
+      ${sv && sv.shop ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
+      <span class="tcnt">${tj.length + shopCount}</span>
+    </div>
+    <div class="tjobs" data-tech="${tech}">`;
+    // Standalone shop card — ONLY if there was no matching draggable ticket to merge onto.
+    let stopOffset = 0;
+    if (sv && sv.shop && !mergedShopOntoJob) {
+      stopOffset = 1;
+      const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
+      const dark = ['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+      h += `<div class="jc" style="border-left-color:${tc};background:rgba(255,255,255,.05);cursor:default">
+        <div style="width:22px;height:22px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px">1</div>
+        <div class="jinfo">
+          <span class="jn">${sv.shop}</span>
+          ${sv.notes?`<span class="jnotes">${sv.notes.replace(/</g,'&lt;')}</span>`:''}
+          ${addr?`<span class="ja">📍 ${addr}</span>`:''}
+        </div>
+      </div>`;
+    }
+    if (!tj.length && !(sv && sv.shop)) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
+    else tj.forEach((j, idx) => { h += jobCard(j, canWrite, idx + 1 + stopOffset, tc); });
+    h += `</div></div>`;
+  });
+  document.getElementById('board').innerHTML = h;
+  if (canWrite) bindDrag();
+}
+
+// Special columns: JP Review, John Follow Up, Follow Up, Quote Needed
+function rSpecialCols() {
+  const SCOLS = [
+    { key:'pink',   label:'JP Review',      color:'#ec4899' },
+    { key:'john',   label:'John Follow Up', color:'#06b6d4' },
+    { key:'orange', label:'Follow Up',      color:'#f97316' },
+    { key:'yellow', label:'Quote Needed',   color:'#eab308' },
+  ];
+  let h = '';
+  SCOLS.forEach(sc => {
+    const sj = jobs.filter(j=>j.color===sc.key);
+    h += `<div class="spcol" style="border-color:${sc.color}30">
+      <div class="thdr" style="background:${sc.color}12">
+        <span class="tn" style="color:${sc.color}">${sc.label}</span>
+        <span class="tcnt">${sj.length}</span>
+      </div>
+      <div class="tjobs" data-spkey="${sc.key}">`;
+    if (!sj.length) h += `<div style="text-align:center;padding:14px;color:var(--dm);font-size:10px">NONE</div>`;
+    else sj.forEach(j => {
+      const tc = TC[j.tech]||'#888';
+      h += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${sc.color};background:${sc.color}10;cursor:default">
+        <span class="jsd" style="background:${sc.color}"></span>
+        <div class="jinfo">
+          <span class="jn">${j.job}</span>
+          <span class="ja" style="color:${tc}">${j.tech}${j.address?' — '+j.address:''}</span>
+        </div>
+        ${canWrite?`<button class="db" onclick="event.stopPropagation();delJob(${j.row},${j.col},${j.id})">✕</button>
+        <button class="ct" onclick="event.stopPropagation();openDD(${j.id},this)"><svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>`:''}
+      </div>`;
+    });
+    h += `</div></div>`;
+  });
+  document.getElementById('spcols').innerHTML = h;
+}
+
+function jobCard(j, editable, stopNum, techColor) {
+  const c = CS[j.color]||CS.none;
+  const tc = techColor || c.f;
+  const dark = ['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+  const numBadge = stopNum
+    ? `<div style="width:22px;height:22px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px">${stopNum}</div>`
+    : `<span class="jsd" style="background:${c.f}"></span>`;
+  return `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${c.f}">
+    ${editable?'<span class="draghandle" title="Drag to reorder"><span></span></span>':''}
+    ${numBadge}
+    <div class="jinfo">
+      <span class="jn">${j.job}</span>
+      ${j.notes?`<span class="jnotes">${String(j.notes).replace(/</g,'&lt;')}</span>`:''}
+      ${j.address?`<span class="ja">📍 ${j.address}</span>`:''}
+    </div>
+    ${editable?`<button class="db" onclick="event.stopPropagation();delJob(${j.row},${j.col},${j.id})">✕</button>
+    <button class="ct" onclick="event.stopPropagation();openDD(${j.id},this)"><svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>`:''}
+  </div>`;
+}
+
+// ── Job mutations ──
+// ── Auto-sort: nearest-neighbor from first job ──
+// ── Sort a single tech's column by nearest-neighbor from home/shop ──
+// Returns true if sort was written to sheet, false if skipped/failed
+async function autoSortTech(tech) {
+  const techJobs = jobs.filter(j => j.tech === tech && j.color === 'green')
+                       .sort((a,b) => a.row - b.row);
+  if (techJobs.length < 2) return false;
+
+  // Geocode any missing addresses
+  for (const j of techJobs) {
+    if (!j.lat && j.address) {
+      const c = await geocodeOne(j.address);
+      if (c) { j.lat = c.lat; j.lng = c.lng; }
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+
+  const geocoded = techJobs.filter(j => j.lat && j.lng);
+  const ungeocoded = techJobs.filter(j => !j.lat || !j.lng);
+  if (geocoded.length < 2) return false;
+
+  // Origin: shop (if assigned today) → home → first job
+  let originLat = null, originLng = null;
+  const sv = shopVisits[tech];
+  if (sv?.shop && SHOP_LOCATIONS[sv.shop]) {
+    const shopAddr = SHOP_LOCATIONS[sv.shop].address;
+    const sc = geoCache[shopAddr] || await geocodeOne(shopAddr);
+    if (sc) { originLat = sc.lat; originLng = sc.lng; }
+    if (!CONFIG.MAPS_API_KEY && !geoCache[shopAddr]) await new Promise(r => setTimeout(r, 1200));
+  }
+  if (originLat === null) {
+    const home = TECH_START_LOCATIONS[tech];
+    if (home?.lat && home?.lng) {
+      originLat = home.lat; originLng = home.lng;
+    } else if (home?.address) {
+      const hc = await geocodeOne(home.address);
+      if (hc) { TECH_START_LOCATIONS[tech].lat=hc.lat; TECH_START_LOCATIONS[tech].lng=hc.lng; originLat=hc.lat; originLng=hc.lng; }
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+  if (originLat === null) { originLat=geocoded[0].lat; originLng=geocoded[0].lng; }
+
+  // Nearest-neighbor greedy sort from origin
+  const sorted = [], remaining = [...geocoded];
+  let curLat=originLat, curLng=originLng;
+  while (remaining.length) {
+    let bestIdx=0, bestDist=Infinity;
+    remaining.forEach((j,i) => {
+      const d = Math.pow(j.lat-curLat,2) + Math.pow(j.lng-curLng,2);
+      if (d < bestDist) { bestDist=d; bestIdx=i; }
+    });
+    const next = remaining.splice(bestIdx,1)[0];
+    sorted.push(next); curLat=next.lat; curLng=next.lng;
+  }
+  const finalOrder = [...sorted, ...ungeocoded];
+
+  // Skip if already in correct order
+  if (!finalOrder.some((j,i) => j.id !== techJobs[i]?.id)) return false;
+
+  // Write new order to sheet
+  const rowSlots = techJobs.map(j=>j.row).sort((a,b)=>a-b);
+  const jobData = {};
+  techJobs.forEach(j => { jobData[j.id] = { val: j.job+(j.address?' - '+j.address:''), hex: STATUS_TO_HEX[j.color]||'#ffffff' }; });
+
+  for (let i=0; i<finalOrder.length; i++) {
+    const j=finalOrder[i], newRow=rowSlots[i], d=jobData[j.id];
+    await sheetsSetValue(newRow, j.col, d.val);
+    await sheetsSetBackground(newRow, j.col, d.hex);
+    j.row = newRow;
+  }
+  return true;
+}
+
+// ── Morning auto-sort: runs once at 6 AM each day ──
+// Keyed by date string in localStorage so it only fires once per day
+async function runMorningSortIfNeeded() {
+  if (!canWrite) return; // only write-access users trigger the sort
+  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const key = 'wrs_sorted_' + today;
+  if (localStorage.getItem(key)) return; // already sorted today
+
+  const now = new Date();
+  const hour = now.getHours();
+  if (hour < 6) return; // before 6 AM — don't sort yet
+
+  // Mark as sorted before starting so concurrent tabs don't double-sort
+  localStorage.setItem(key, '1');
+
+  // Clean up old sort keys (keep only today's)
+  Object.keys(localStorage)
+    .filter(k => k.startsWith('wrs_sorted_') && k !== key)
+    .forEach(k => localStorage.removeItem(k));
+
+  console.log('[MorningSort] Starting daily sort at', now.toLocaleTimeString());
+  isSaving = true;
+  let sortedCount = 0;
+  try {
+    for (const tech of TECHS) {
+      const did = await autoSortTech(tech);
+      if (did) { sortedCount++; console.log('[MorningSort] Sorted', tech); }
+    }
+    if (sortedCount > 0) {
+      render(); updateMap();
+      toast(`✓ Morning routes set for ${sortedCount} tech${sortedCount>1?'s':''}`);
+    }
+  } catch(err) {
+    console.error('[MorningSort] Error:', err);
+    // Remove the key so it can retry on next refresh
+    localStorage.removeItem(key);
+  } finally {
+    isSaving = false;
+  }
+}
+
+function addJ(tech) {
+  if (!canWrite) return;
+  const inp = document.getElementById('ai_'+tech), v = inp?.value.trim();
+  if (!v) return; inp.value='';
+  const parsed = parseJob(v);
+  // Find first empty row
+  const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
+  let targetRow = null;
+  for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
+  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
+  const col = TECHS.indexOf(tech)+1;
+  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
+  jobs.push(newJob);
+  render(); updateMap();
+  Promise.all([sheetsSetValue(targetRow, col, v), sheetsSetBackground(targetRow, col, '#00ff00')])
+    .then(() => geocodeGreenJobs().then(()=>updateMap()))
+    .catch(()=>toast('Save failed'));
+}
+
+function delJob(row, col, id) {
+  if (!canWrite) return;
+  jobs = jobs.filter(j=>j.id!==id);
+  render(); updateMap();
+  sheetsClear(row, col).catch(()=>toast('Delete failed'));
+}
+
+async function swapRows(row1, col, row2) {
+  // Swap values + backgrounds for two cells in the same column
+  const range1 = `Sheet1!${colLetter(col)}${row1}`, range2 = `Sheet1!${colLetter(col)}${row2}`;
+  // Read both first
+  const [d1, d2] = await Promise.all([sheetsGetFormatting(range1), sheetsGetFormatting(range2)]);
+  const cell1 = d1.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0];
+  const cell2 = d2.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0];
+  const v1 = cell1?.userEnteredValue?.stringValue||'', v2 = cell2?.userEnteredValue?.stringValue||'';
+  const b1 = rgbToHex(cell1?.userEnteredFormat?.backgroundColor||{}), b2 = rgbToHex(cell2?.userEnteredFormat?.backgroundColor||{});
+  await Promise.all([
+    sheetsSetValue(row1,col,v2), sheetsSetBackground(row1,col,b2),
+    sheetsSetValue(row2,col,v1), sheetsSetBackground(row2,col,b1),
+  ]);
+}
+
+// ── Status dropdown ──
+function openDD(id, el) {
+  if (!canWrite) return;
+  const j = jobs.find(x=>x.id===id); if(!j) return;
+  const r = el.getBoundingClientRect();
+  let l = r.right-170, t = r.bottom+6;
+  if (l<6) l=6; if (t+260>window.innerHeight) t=Math.max(6,r.top-260);
+  document.getElementById('ddp').innerHTML = ['green','orange','yellow','blue','inst','pink','john','close','none'].map(c=>{
+    const s=c===j.color;
+    return `<div class="ddi${s?' sel':''}" style="${s?'background:'+CS[c].s:''}" onclick="chgColor(${id},'${c}')"><span class="ddd" style="background:${CS[c].f}"></span>${SL[c]}</div>`;
+  }).join('');
+  document.getElementById('ddp').style.cssText=`display:block;top:${t}px;left:${l}px`;
+  document.getElementById('ddo').style.display='block';
+}
+function closeDD() { document.getElementById('ddp').style.display='none'; document.getElementById('ddo').style.display='none'; }
+
+function chgColor(id, nc) {
+  const j = jobs.find(x=>x.id===id); if(!j) return;
+  closeDD(); j.color=nc;
+  render(); updateMap();
+  sheetsSetBackground(j.row, j.col, STATUS_TO_HEX[nc]||'#ffffff').catch(()=>toast('Save failed'));
+}
+
+// ── Search ──
+document.getElementById('sbox').oninput = e => { search=e.target.value; render(); };
+
+// ── Vendor notes (hardcoded) ──
+function renderNotes() {
+  const NOTES = [
+    {
+      header: 'Synergy Walgreens',
+      color: '#f97316',
+      body: `*NTE  $550.00*\n**Call if any parts needed**\n**2 Hour Labor Max**\n1- Tech to text Trevor 774-462-1809 to check in/out. Include store number, city, & state.\n2- Prior Authorization of work to be performed if going over\nMust Send picture of Data Tag Showing Make/Model/Serial # of Unit\nMust take before and after pictures`
+    },
+    {
+      header: 'Synergy Ross',
+      color: '#eab308',
+      body: `Upon arrival:\n1- Tech to text John Kilfara cell 978-735-5423. Include store number, city, & state.\n2- Authorization of work to be performed (regardless of NTE)\n3- NTE increase needed - pictures must be provided via text or email.`
+    },
+    {
+      header: "Synergy BJ's Verisae",
+      color: '#10b981',
+      body: `Username: Repairs@synergywastegroup.com\nPassword: Repairs2025!`
+    },
+    {
+      header: 'DRM BJ\'s',
+      color: '#3b82f6',
+      body: `***NTE $1000.00***\nCall 609-389-8517 once on site\nand\nCheck in and out: http://mobile.verisae.com/\nUsername: techwr\nPassword: techwr\n\nCORP REQUIRES THE FOLLOWING PHOTOS:\n• FULL PICTURE OF THE BALER\n• PLATE LISTING MAKE/MODEL/SERIAL NUMBER\n• PICTURE OF THE ISSUE`
+    },
+    {
+      header: 'A-Prime',
+      color: '#8b5cf6',
+      body: `Please call or text 781-389-2810 to check in and out.`
+    },
+    {
+      header: 'Winn-Dixie',
+      color: '#dc2626',
+      body: `Check in and out of service channel\nPin: 11162360\nTracking:`
+    },
+    {
+      header: 'Synergy Burlington',
+      color: '#a855f7',
+      body: `Check in and out of service channel\nPin: 2222004\nTracking:`
+    },
+    {
+      header: 'Whole Foods',
+      color: '#06b6d4',
+      body: `Check in and out of Corrigo Pro. If unable to login contact the office`
+    },
+  ];
+  document.getElementById('nsec').style.display='';
+
+  // Build admin (with Copy) and tech (with callable tel: links) variants.
+  // Admin gets Copy because they often paste vendor instructions into emails/tickets;
+  // techs get tel: links because they're on phones in the field.
+  const escape = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Match phone numbers like 774-462-1809, 609.389.8517, (978) 735-5423, +1 781-389-2810
+  const phoneRe = /(\+?\d[\d\s().-]{8,}\d)/g;
+  const linkifyPhones = body => escape(body).replace(phoneRe, (m) => {
+    const digits = m.replace(/\D/g,'');
+    // Require 10+ digits to avoid PINs / tracking numbers / NTE amounts being linkified.
+    // Also reject if the original match already lacks separators (looks like an ID, not a phone).
+    if (digits.length < 10 || digits.length > 15) return m;
+    if (!/[\s().-]/.test(m)) return m;
+    return `<a class="tel-link" href="tel:+${digits.length===10?'1'+digits:digits}">${m}</a>`;
+  });
+
+  const adminHtml = NOTES.map((n, idx) =>
+    `<div class="nc" style="border-top:3px solid ${n.color}" data-note-idx="${idx}">
+      <div class="nc-header" style="background:${n.color}18;color:${n.color}">
+        <span>${escape(n.header)}</span>
+        <button type="button" class="nc-copy" onclick="copyVendorNote(this, ${idx})" aria-label="Copy ${escape(n.header)} note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          COPY
+        </button>
+      </div>
+      <div class="nc-body">${escape(n.body)}</div>
+    </div>`
+  ).join('');
+  const techHtml = NOTES.map(n =>
+    `<div class="nc" style="border-top:3px solid ${n.color}">
+      <div class="nc-header" style="background:${n.color}18;color:${n.color}">${escape(n.header)}</div>
+      <div class="nc-body">${linkifyPhones(n.body)}</div>
+    </div>`
+  ).join('');
+
+  document.getElementById('ngrid').innerHTML = adminHtml;
+  // Stash the raw notes so the copy handler can reach them
+  window.__vendorNotes = NOTES;
+  // Mirror into the tech homepage section so techs see the same vendor notes below their tickets
+  const tvNsec  = document.getElementById('tvNsec');
+  const tvNgrid = document.getElementById('tvNgrid');
+  if (tvNsec && tvNgrid) {
+    tvNsec.style.display = '';
+    tvNgrid.innerHTML = techHtml;
+  }
+}
+
+// Copy a vendor note's body to the clipboard (admin button handler)
+function copyVendorNote(btn, idx) {
+  const notes = window.__vendorNotes || [];
+  const n = notes[idx];
+  if (!n) return;
+  const text = n.header + '\n' + n.body;
+  const showOk = () => {
+    const original = btn.innerHTML;
+    btn.classList.add('ok');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> COPIED';
+    setTimeout(() => { btn.classList.remove('ok'); btn.innerHTML = original; }, 1600);
+  };
+  const showFail = () => { toast('Copy failed — long-press to copy manually'); };
+  // Prefer the modern clipboard API; fall back to a hidden textarea + execCommand.
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(showOk).catch(()=>{
+      // Fallback path
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+        showOk();
+      } catch(e) { showFail(); }
+    });
+  } else {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      showOk();
+    } catch(e) { showFail(); }
+  }
+}
+
+// ════════════════════════════════════════════
+//  GOOGLE DRIVE FOLDER BUTTONS (tech homepage)
+// ════════════════════════════════════════════
+// Lists immediate child folders of CONFIG.DRIVE_PARENT_FOLDER_ID and renders
+// them as buttons. Each button opens that folder in Drive in a new tab.
+// A "Homepage" button at the front opens the parent folder itself.
+//
+// Auth: uses the existing OAuth access token, which now requests the
+// drive.metadata.readonly scope. The first user to log in after this
+// change will see a one-time consent screen for that scope.
+//
+// Sharing: the parent folder (and ideally its contents) must be shared
+// with the Google account that's logging in — either explicitly with each
+// tech or via "anyone with link can view".
+async function loadDriveFolders() {
+  const sec  = document.getElementById('tvDriveSec');
+  const grid = document.getElementById('tvDriveGrid');
+  if (!sec || !grid) return;
+
+  const parentId = (CONFIG.DRIVE_PARENT_FOLDER_ID || '').trim();
+  if (!parentId) {
+    // Not configured yet — keep the section hidden so techs don't see an empty box
+    sec.style.display = 'none';
+    return;
+  }
+  if (!gAccessToken) {
+    sec.style.display = 'none';
+    return;
+  }
+
+  sec.style.display = '';
+  grid.innerHTML = '<div class="drive-empty">Loading folders…</div>';
+
+  try {
+    // ?q=<parentId> in parents and mimeType is folder; only request the fields we need
+    const q = `'${parentId.replace(/'/g,"\\'")}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&orderBy=name&pageSize=100`;
+    let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) {
+      // Token expired — silent refresh, retry once
+      await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+      r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    }
+    if (r.status === 403) {
+      // Most common cause: scope wasn't granted, or folder isn't shared with this user.
+      grid.innerHTML = `<div class="drive-empty">Drive access denied — make sure the parent folder is shared with your Google account, then sign out and back in to re-grant Drive permission.</div>`;
+      return;
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(()=>'');
+      console.warn('Drive list failed:', r.status, txt);
+      grid.innerHTML = `<div class="drive-empty">Couldn't load Drive folders (HTTP ${r.status}).</div>`;
+      return;
+    }
+    const data = await r.json();
+    const folders = data.files || [];
+    renderDriveFolders(parentId, folders);
+  } catch(e) {
+    console.error('Drive load error:', e);
+    grid.innerHTML = `<div class="drive-empty">Couldn't load Drive folders.</div>`;
+  }
+}
+
+function renderDriveFolders(parentId, folders) {
+  const grid = document.getElementById('tvDriveGrid');
+  if (!grid) return;
+  // Soft palette so each button has a distinguishable colored circle.
+  // Hash the folder name to pick a stable color so the same folder always
+  // gets the same color across sessions.
+  const palette = ['#3b82f6','#10b981','#f97316','#eab308','#ec4899','#8b5cf6','#06b6d4','#ef4444','#84cc16','#a855f7'];
+  const colorFor = name => {
+    let h = 0;
+    for (let i=0; i<name.length; i++) { h = ((h<<5) - h + name.charCodeAt(i)) | 0; }
+    return palette[Math.abs(h) % palette.length];
+  };
+  const initials = name => {
+    const parts = name.replace(/[^A-Za-z0-9 ]/g,'').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '📁';
+    if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
+    return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+  };
+  const escapeHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  // Always-on-top "Homepage" button pointing to the parent folder
+  let html = `<a class="drive-btn home" href="https://drive.google.com/drive/folders/${encodeURIComponent(parentId)}" target="_blank" rel="noopener" title="Open Drive home folder">
+    <span class="drive-btn-icon">🏠</span>
+    <span class="drive-btn-label">${escapeHtml(CONFIG.DRIVE_PARENT_LABEL || 'Drive Home')}</span>
+  </a>`;
+
+  if (!folders.length) {
+    html += `<div class="drive-empty" style="grid-column:1/-1">No subfolders found in this Drive folder yet.</div>`;
+  } else {
+    folders.forEach(f => {
+      const c = colorFor(f.name);
+      html += `<a class="drive-btn" href="https://drive.google.com/drive/folders/${encodeURIComponent(f.id)}" target="_blank" rel="noopener" title="Open ${escapeHtml(f.name)}">
+        <span class="drive-btn-icon" style="background:linear-gradient(135deg,${c},${c}cc)">${escapeHtml(initials(f.name))}</span>
+        <span class="drive-btn-label">${escapeHtml(f.name)}</span>
+      </a>`;
+    });
+  }
+  grid.innerHTML = html;
+}
+
+// ════════════════════════════════════════════
+//  SHOP MODAL
+// ════════════════════════════════════════════
+function openShopModal(tech) {
+  if (!canWrite) return;
+  shopModalTech = tech;
+  shopModalSelected = shopVisits[tech]?.shop || null;
+  document.getElementById('shopModalTitle').textContent = `${tech} — Shop Visit`;
+  document.getElementById('shopNoteInput').style.display = shopModalSelected ? 'block' : 'none';
+  document.getElementById('shopNoteInput').value = shopVisits[tech]?.notes || '';
+  document.getElementById('shopOkBtn').style.display = shopModalSelected ? 'block' : 'none';
+  document.getElementById('btnNorth').classList.toggle('sel', shopModalSelected==='North Shop');
+  document.getElementById('btnSouth').classList.toggle('sel', shopModalSelected==='South Shop');
+  document.getElementById('shopModalBg').classList.add('open');
+}
+
+function selectShop(shop) {
+  shopModalSelected = shop;
+  document.getElementById('btnNorth').classList.toggle('sel', shop==='North Shop');
+  document.getElementById('btnSouth').classList.toggle('sel', shop==='South Shop');
+  document.getElementById('shopNoteInput').style.display = 'block';
+  document.getElementById('shopOkBtn').style.display = 'block';
+  document.getElementById('shopNoteInput').focus();
+}
+
+async function confirmShop() {
+  if (!shopModalTech || !shopModalSelected) return;
+  const notes = document.getElementById('shopNoteInput').value.trim();
+  const savedTech = shopModalTech;
+  const savedShop = shopModalSelected;
+  const shopAddr = SHOP_LOCATIONS[savedShop]?.address || '';
+  closeShopModal();
+  toast('Adding shop ticket...');
+
+  const col = TECHS.indexOf(savedTech) + 1;
+  if (col < 1) { toast('Tech not found'); return; }
+
+  // Pre-populate geoCache from hardcoded shop coords — instant, no network needed
+  if (shopAddr) {
+    const shopCoords = SHOP_LOCATIONS[savedShop];
+    if (shopCoords?.lat) geoCache[shopAddr] = { lat: shopCoords.lat, lng: shopCoords.lng };
+  }
+
+  // Write shop ticket to row 25 (below all job/vendor rows, no conflicts)
+  await sheetsClear(25, col);
+  const cellVal = savedShop + (shopAddr ? ', '+shopAddr : '');
+  await sheetsSetValue(25, col, cellVal);
+  await sheetsSetBackground(25, col, '#00ff00');
+
+  // Store notes in row 26 so all devices read them on sync
+  await sheetsSetValue(26, col, notes ? 'SHOPNOTE:'+notes : '').catch(()=>{});
+  // Also cache locally
+  shopVisits[savedTech] = { shop: savedShop, notes };
+  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+
+  toast(savedTech+' → '+savedShop);
+  loadData();
+}
+
+async function clearShop(tech) {
+  delete shopVisits[tech];
+  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+  const col = TECHS.indexOf(tech) + 1;
+  if (col >= 1) {
+    // Clear shop note from row 26 and shop ticket from row 25
+    await sheetsSetValue(26, col, '').catch(()=>{});
+    await sheetsClear(25, col);
+
+  }
+  render();
+  toast('Shop removed from ' + tech);
+  loadData();
+}
+
+function closeShopModal() {
+  document.getElementById('shopModalBg').classList.remove('open');
+  shopModalTech = null; shopModalSelected = null;
+}
+// Close modal on background click
+document.getElementById('shopModalBg').addEventListener('click', function(e) {
+  if(e.target===this) closeShopModal();
+});
+
+// ════════════════════════════════════════════
+//  DRAG & DROP
+// ════════════════════════════════════════════
+function bindDrag() {
+  let ds = null;
+  document.querySelectorAll('.jc').forEach(el => {
+    const handle = el.querySelector('.draghandle');
+    if (!handle) return; // No handle = not editable, skip entirely
+
+    // Only the handle arms the card for dragging. Mouse + touch.
+    const arm    = () => { el.draggable = true; };
+    const disarm = () => { el.draggable = false; };
+    handle.addEventListener('mousedown',  arm);
+    handle.addEventListener('touchstart', arm, {passive:true});
+    document.addEventListener('mouseup',  disarm);
+    document.addEventListener('touchend', disarm);
+
+    el.addEventListener('dragstart', function(e) {
+      // Hard guard: if the card wasn't armed via the handle, abort.
+      if (!el.draggable) { e.preventDefault(); return; }
+      ds=this; this.classList.add('dragging');
+      e.dataTransfer.setData('text/plain','x'); e.dataTransfer.effectAllowed='move';
+    });
+    el.addEventListener('dragend', function() {
+      this.classList.remove('dragging'); ds=null; el.draggable=false;
+      document.querySelectorAll('.dragover').forEach(x=>x.classList.remove('dragover'));
+    });
+    el.addEventListener('dragover', function(e) {
+      e.preventDefault(); if(this!==ds&&this.classList.contains('jc')){
+        document.querySelectorAll('.dragover').forEach(x=>{if(x!==this)x.classList.remove('dragover')});
+        this.classList.add('dragover');
+      }
+    });
+    el.addEventListener('dragleave', function() { this.classList.remove('dragover'); });
+    el.addEventListener('drop', async function(e) {
+      e.stopPropagation(); e.preventDefault(); this.classList.remove('dragover');
+      if (!ds||this===ds) return;
+      const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
+      const tJob=jobs.find(x=>x.id===parseInt(this.dataset.id));
+      if (!sJob||!tJob) return;
+      if (sJob.tech===tJob.tech) {
+        // Same column reorder
+        const sr=sJob.row, tr=tJob.row;
+        [sJob.row,tJob.row]=[tJob.row,sJob.row];
+        [sJob.job,tJob.job]=[tJob.job,sJob.job];
+        [sJob.color,tJob.color]=[tJob.color,sJob.color];
+        [sJob.address,tJob.address]=[tJob.address,sJob.address];
+        [sJob.lat,tJob.lat]=[tJob.lat,sJob.lat];
+        [sJob.lng,tJob.lng]=[tJob.lng,sJob.lng];
+        render(); updateMap();
+        swapRows(sr, parseInt(ds.dataset.col), tr).catch(()=>toast('Reorder failed'));
+      } else {
+        // Cross-column: move job to target tech's column
+        const oldRow = sJob.row, oldCol = sJob.col;
+        const newTech = tJob.tech;
+        const newCol = TECHS.indexOf(newTech) + 1;
+        const occupied = new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
+        let newRow = null;
+        for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
+        if (!newRow) { toast(`${newTech} column is full`); return; }
+        const srcVal = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
+        const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
+        // Pause auto-refresh, write sheet first, then update UI
+        isSaving = true;
+        toast(`Moving to ${newTech}...`);
+        try {
+          await sheetsClear(oldRow, oldCol);
+          await sheetsSetValue(newRow, newCol, srcVal);
+          await sheetsSetBackground(newRow, newCol, srcHex);
+          sJob.tech = newTech; sJob.col = newCol; sJob.row = newRow;
+          render(); updateMap();
+          toast(`✓ Moved to ${newTech}`);
+        } catch(err) {
+          toast('Move failed — try again');
+          console.error('Cross-column move failed:', err);
+        } finally { isSaving = false; }
+      }
+    });
+    el.draggable = false;
+  });
+  // Drop on column (empty or not — allows moving to different tech)
+  document.querySelectorAll('.tjobs').forEach(tj => {
+    tj.addEventListener('dragover', e=>{ e.preventDefault(); tj.classList.add('dragover'); });
+    tj.addEventListener('dragleave', ()=>tj.classList.remove('dragover'));
+    tj.addEventListener('drop', async e=>{
+      e.preventDefault(); tj.classList.remove('dragover');
+      if(!ds) return;
+      const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
+      if(!sJob) return;
+      const newTech=tj.dataset.tech;
+      if(!newTech||newTech===sJob.tech) return;
+      if(!TECHS.includes(newTech)) return;
+      const oldRow=sJob.row, oldCol=sJob.col;
+      const newCol=TECHS.indexOf(newTech)+1;
+      const occupied=new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
+      let newRow=null;
+      for(let r=JOB_ROW_START;r<=JOB_ROW_END;r++){if(!occupied.has(r)){newRow=r;break;}}
+      if(!newRow){toast(`${newTech} column is full`);return;}
+      const srcVal=sJob.job+(sJob.address?' - '+sJob.address:'');
+      const srcHex=STATUS_TO_HEX[sJob.color]||'#ffffff';
+      isSaving = true;
+      toast(`Moving to ${newTech}...`);
+      try {
+        await sheetsClear(oldRow,oldCol);
+        await sheetsSetValue(newRow,newCol,srcVal);
+        await sheetsSetBackground(newRow,newCol,srcHex);
+        sJob.tech=newTech; sJob.col=newCol; sJob.row=newRow;
+        render(); updateMap();
+        toast(`✓ Moved to ${newTech}`);
+      } catch(err) {
+        toast('Move failed — try again');
+        console.error('tjobs move failed:', err);
+      } finally { isSaving=false; }
+    });
+  });
+}
+
+// ════════════════════════════════════════════
+//  MAP — ADMIN
+// ════════════════════════════════════════════
+function initMap() {
+  if (lmap) return;
+  lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
+  markerLayer = L.layerGroup().addTo(lmap);
+  routeLayer  = L.layerGroup().addTo(lmap);
+}
+
+function togMap() {
+  const w=document.getElementById('mapwrap'), b=document.getElementById('mtog');
+  if(w.style.display==='none'){w.style.display='flex';b.textContent='Hide Map';setTimeout(()=>lmap&&lmap.invalidateSize(),100);}
+  else{w.style.display='none';b.textContent='Show Map';}
+}
+
+function updateMap() {
+  const tj=jobs.filter(j=>j.color==='green'&&j.lat&&j.lng);
+  const sec=document.getElementById('mapsec');
+  if(!tj.length){sec.style.display='none';return;}
+  sec.style.display='';
+  initMap();
+  setTimeout(()=>lmap&&lmap.invalidateSize(),150);
+
+  const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
+
+  const activeTechs=TECHS.filter(t=>tj.some(j=>j.tech===t));
+  let pillH=`<button class="mfp" style="${mapTech==='all'?'background:var(--gr);color:#000':'background:var(--sf);color:var(--dm2);border:1px solid var(--bd2)'}" onclick="setMapTech('all')">ALL (${tj.length})</button>`;
+  activeTechs.forEach(t=>{
+    const n=tj.filter(j=>j.tech===t).length, tc=TC[t]||'#888', a=mapTech===t;
+    pillH+=`<button class="mfp" style="${a?'background:'+tc+';color:#000':'background:var(--sf);color:'+tc+';border:1px solid '+tc+'30'}" onclick="setMapTech('${t}')">${t} (${n})</button>`;
+  });
+  document.getElementById('mfpills').innerHTML=pillH;
+
+  // Sort: by TECHS column order, shop first within each tech, then by row
+  const sortJobs=arr=>arr.slice().sort((a,b)=>{
+    const ti=TECHS.indexOf(a.tech)-TECHS.indexOf(b.tech);
+    if(ti!==0) return ti;
+    const aShop=SHOP_NAMES_SET.has(a.job)?0:1;
+    const bShop=SHOP_NAMES_SET.has(b.job)?0:1;
+    if(aShop!==bShop) return aShop-bShop;
+    return (a.row||0)-(b.row||0);
+  });
+  const vj=sortJobs(mapTech==='all'?tj:tj.filter(j=>j.tech===mapTech));
+  markerLayer.clearLayers(); routeLayer.clearLayers(); markersArr=[];
+  const bounds=[], tCtr={};
+  vj.forEach((j,i)=>{
+    tCtr[j.tech]=(tCtr[j.tech]||0)+1;
+    const num=tCtr[j.tech], tc=TC[j.tech]||'#888';
+    const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+    const isShop=SHOP_NAMES_SET.has(j.job);
+    const icon=L.divIcon({className:'',html:`<div style="width:26px;height:26px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.6)${isShop?';outline:2px solid #fff;outline-offset:1px':''}">${num}</div>`,iconSize:[26,26],iconAnchor:[13,13]});
+    const mk=L.marker([j.lat,j.lng],{icon}).addTo(markerLayer).bindPopup(`<b>#${num}${isShop?' 🏠':''} — ${j.job}</b><br><span style="color:${tc};font-weight:700">${j.tech}</span><br><small>${j.address}</small>`);
+    markersArr.push({mk,lat:j.lat,lng:j.lng}); bounds.push([j.lat,j.lng]);
+  });
+  if(bounds.length) setTimeout(()=>lmap.fitBounds(bounds,{padding:[60,60],maxZoom:11}),200);
+  renderMapList(vj,null,null,null);
+  if(mapTech!=='all'&&vj.length>=2){
+    const wp=vj.map(j=>j.lng+','+j.lat).join(';');
+    fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson`)
+      .then(r=>r.json()).then(d=>{
+        if(d.code==='Ok'&&d.routes[0]){
+          L.polyline(d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]),{color:TC[mapTech]||'#fff',weight:4,opacity:.8}).addTo(routeLayer);
+          const legs=d.routes[0].legs.map(l=>({min:Math.round(l.duration/60),mi:(l.distance/1609.34).toFixed(1)}));
+          renderMapList(vj,legs,Math.round(d.routes[0].duration/60),(d.routes[0].distance/1609.34).toFixed(1));
+        }
+      }).catch(()=>{});
+  }
+}
+
+function setMapTech(t){mapTech=t;updateMap();}
+function panTo(i){if(markersArr[i]){lmap.setView([markersArr[i].lat,markersArr[i].lng],15);markersArr[i].mk.openPopup();}}
+
+function renderMapList(vj, legs, totalMin, totalMi) {
+  const se = document.getElementById('routeSum');
+  if (mapTech!=='all'&&totalMin) {
+    const tc=TC[mapTech]||'#888';
+    se.innerHTML=`<div class="routecard" style="border-left:3px solid ${tc}">
+      <div class="routecard-title" style="color:${tc}">${mapTech}'s Route</div>
+      <span class="rstat" style="color:var(--gr)">⏱ ${totalMin} min</span>
+      <span class="rstat" style="color:var(--bl)">🚗 ${totalMi} mi</span>
+      <span class="rstat" style="color:var(--dm2)">${vj.length} stops</span>
+    </div>`;
+  } else se.innerHTML='';
+  const tCtr={};
+  document.getElementById('jobList').innerHTML = vj.map((j,i)=>{
+    tCtr[j.tech]=(tCtr[j.tech]||0)+1;
+    const tc=TC[j.tech]||'#888', dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+    const leg=legs?.[i];
+    return `<div class="mlitem" onclick="panTo(${i})">
+      <div class="mlnum" style="background:${tc};color:${dark?'#fff':'#000'}">${tCtr[j.tech]}</div>
+      <div><div class="mlname">${j.job}</div><div style="color:${tc};font-size:10px;font-weight:700;letter-spacing:.3px">${j.tech}</div><div class="mladdr">${j.address}</div></div>
+    </div>${leg?`<div class="mlleg">↓ ${leg.min} min · ${leg.mi} mi</div>`:''}`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════
+//  TECH VIEW
+// ════════════════════════════════════════════
+async function renderTechView(withMap=true) {
+  if (!curUser?.tech) return;
+  const tech = curUser.tech;
+  // Reload shop notes from localStorage
+  try { const s=localStorage.getItem('wrs_shops'); if(s){const p=JSON.parse(s);Object.keys(p).forEach(k=>shopVisits[k]=p[k]);}} catch(e){}
+  // Kick off Drive folder load in parallel (no await — don't block the render)
+  loadDriveFolders();
+  const sv = shopVisits[tech]; // may have notes to display
+  const tc = TC[tech]||'#888';
+  const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+  const tvTickets = document.getElementById('tvTickets');
+  const mapSec = document.getElementById('mapsecTech');
+
+  // Get today's green tickets sorted by row (shop is row 6 = first)
+  const allTechJobs = jobs.filter(j=>j.tech===tech);
+  const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
+  const myJobs = allTechJobs.filter(j=>j.color==='green').sort((a,b)=>{
+    const aShop = SHOP_NAMES_SET.has(a.job)?0:1;
+    const bShop = SHOP_NAMES_SET.has(b.job)?0:1;
+    if(aShop!==bShop) return aShop-bShop; // shop always first
+    return (a.row||0)-(b.row||0);
+  });
+
+
+  // Geocode all addresses — skipped on first pass (withMap=false), done by geocodeGreenJobs instead
+  if (withMap) {
+    const toGeocode = myJobs.filter(j=>j.address && !SHOP_NAMES_SET.has(j.job));
+    for (const j of toGeocode) {
+      if (geoCache[j.address]) {
+        j.lat=geoCache[j.address].lat; j.lng=geoCache[j.address].lng;
+        continue;
+      }
+      const coords = await geocodeOne(j.address);
+      if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
+      if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200));
+    }
+  }
+  // Ensure shop job always has coords from hardcoded SHOP_LOCATIONS
+  myJobs.forEach(j => {
+    if (SHOP_NAMES_SET.has(j.job)) {
+      const loc = SHOP_LOCATIONS[j.job];
+      if (loc?.lat) { j.lat = loc.lat; j.lng = loc.lng; }
+    }
+  });
+
+  if (!myJobs.length) {
+    mapSec.style.display='none';
+    tvTickets.innerHTML=`<div style="text-align:center;padding:40px;color:var(--dm2);font-size:14px">NO TICKETS FOR TODAY</div>`;
+    return;
+  }
+
+
+  // Build stops — shop always gets coords directly from SHOP_LOCATIONS (no geoCache needed)
+  const SHOP_NAMES = Object.keys(SHOP_LOCATIONS);
+  // The tech's configured shop visit (if any) — used to attach notes to a
+  // matching draggable ticket so we don't render a separate "double ticket".
+  const svShopAddr = (sv?.shop && SHOP_LOCATIONS[sv.shop]?.address || '').trim().toLowerCase();
+  const svShopName = (sv?.shop || '').trim().toLowerCase();
+  const allStops = myJobs.map((j,i)=>{
+    const isShop = SHOP_NAMES_SET.has(j.job);
+    // Notes attach if the job IS a known shop OR if the job's name/address
+    // matches the tech's currently-configured shop visit.
+    const jn = (j.job||'').trim().toLowerCase();
+    const ja = (j.address||'').trim().toLowerCase();
+    const matchesShopVisit = sv && sv.shop && (jn === svShopName || (svShopAddr && ja === svShopAddr));
+    const notes = (isShop || matchesShopVisit) ? (shopVisits[tech]?.notes || '') : '';
+    let lat, lng;
+    if (isShop) {
+      // Always use hardcoded coords — never depend on geocache for shops
+      const shopLoc = SHOP_LOCATIONS[j.job] || SHOP_LOCATIONS[sv?.shop];
+      lat = shopLoc?.lat || null;
+      lng = shopLoc?.lng || null;
+    } else {
+      const cached = j.address ? geoCache[j.address] : null;
+      lat = cached?.lat || j.lat || null;
+      lng = cached?.lng || j.lng || null;
+    }
+    return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop:(isShop||matchesShopVisit), jobRef:j };
+  });
+
+  // Always build cards immediately so the list is visible
+  buildTechCards(allStops, null, null, null, tc, dark);
+
+  // Map section — only runs after geocoding is complete (withMap=true)
+  if (!withMap) return;
+
+  // Build mapStops AFTER geocoding so all available coords are included
+  const mapStops = allStops.filter(s=>s.lat&&s.lng);
+
+  // Show map
+  mapSec.style.display='';
+  document.getElementById('tvMapTitle').textContent = `${tech}'s Route`;
+  // Set date/time in the dedicated datetime element (now sits below the map)
+  const dtEl = document.getElementById('tvMapDateTime');
+  if (dtEl) {
+    dtEl.style.display = '';
+    const now = new Date();
+    dtEl.textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) + ' · ' + now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+
+  // Reuse existing map instance — only recreate if not yet initialised
+  // This avoids reloading all tiles on every refresh (major speed improvement)
+  if (!lmapTech) {
+    lmapTech = L.map('lmapTech',{zoomControl:true,preferCanvas:true}).setView([26.5,-80.2],10);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+      maxZoom:19, attribution:'', keepBuffer:4
+    }).addTo(lmapTech);
+    markerLayerTech = L.layerGroup().addTo(lmapTech);
+    routeLayerTech  = L.layerGroup().addTo(lmapTech);
+  } else {
+    markerLayerTech.clearLayers();
+    routeLayerTech.clearLayers();
+  }
+  setTimeout(()=>lmapTech&&lmapTech.invalidateSize(),150);
+
+  const bounds=[];
+  mapStops.forEach(s=>{
+    const icon=L.divIcon({className:'',html:`<div style="width:28px;height:28px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,.6)">${s.label}</div>`,iconSize:[28,28],iconAnchor:[14,14]});
+    L.marker([s.lat,s.lng],{icon}).addTo(markerLayerTech).bindPopup(`<b>${s.label}. ${s.name}</b>${s.addr?'<br>'+s.addr:''}`);
+    bounds.push([s.lat,s.lng]);
+  });
+  if(bounds.length) setTimeout(()=>{lmapTech.fitBounds(bounds,{padding:[50,50],maxZoom:12});lmapTech.invalidateSize();},300);
+  setTimeout(()=>lmapTech&&lmapTech.invalidateSize(),600);
+
+  // Route all geocoded stops — keep track of which allStops index each mapStop came from
+  // so leg durations align correctly even when some stops lack geocoding
+  const mapStopIndices = []; // index into allStops for each entry in mapStops
+  allStops.forEach((s,i)=>{ if(s.lat&&s.lng) mapStopIndices.push(i); });
+
+  if(mapStops.length>=2){
+    const wp=mapStops.map(s=>s.lng+','+s.lat).join(';');
+    console.log(`[Route] ${mapStops.length} stops for ${tech}:`, mapStops.map(s=>s.name));
+    fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson&steps=false`)
+      .then(r=>r.json()).then(d=>{
+        console.log('[OSRM]', d.code, d.routes?.[0]?.legs?.length, 'legs');
+        if(d.code==='Ok'&&d.routes&&d.routes[0]){
+          const route=d.routes[0];
+          L.polyline(route.geometry.coordinates.map(c=>[c[1],c[0]]),{color:tc,weight:4,opacity:.85}).addTo(routeLayerTech);
+          const totalMin=Math.round(route.duration/60);
+          const totalMi=(route.distance/1609.34).toFixed(1);
+          const rawLegs=route.legs.map(l=>({min:Math.round(l.duration/60),mi:(l.distance/1609.34).toFixed(1)}));
+          const legsById = {};
+          rawLegs.forEach((leg, li) => { legsById[mapStopIndices[li]] = leg; });
+          buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark);
+        } else {
+          console.warn('[OSRM] Route failed:', d.code, d.message);
+        }
+      }).catch(e=>console.error('[OSRM] fetch error:', e));
+  } else {
+    console.log(`[Route] Only ${mapStops.length} geocoded stop(s) — skipping OSRM`);
+  }
+}
+
+function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
+  const tvTickets = document.getElementById('tvTickets');
+  let h = '';
+  // Route summary bar
+  if(totalMin){
+    h+=`<div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:10px 14px;margin-bottom:10px;display:flex;gap:16px;font-size:13px;font-weight:600">
+      <span style="color:var(--gr)">⏱ ${totalMin} min total</span>
+      <span style="color:var(--bl)">🚗 ${totalMi} mi total</span>
+      <span style="color:var(--dm2)">${allStops.length} stops</span>
+    </div>`;
+  }
+  allStops.forEach((s,i)=>{
+    // legsById is keyed by allStops index — leg[i] = time from stop i to next geocoded stop
+    const leg = legsById ? legsById[i] : null;
+    h+=`<div class="tv-card" style="${s.isShop?'border-left:3px solid '+tc+';background:rgba(255,255,255,.03)':''}">
+      <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'};flex-shrink:0">${s.label}</div>
+      <div style="flex:1;min-width:0;user-select:text">
+        <div class="tv-job">${s.name}</div>
+        ${s.addr?`<div class="tv-addr" style="margin-top:3px">📍 ${s.addr}</div>`:''}
+        ${s.isShop&&s.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:6px;line-height:1.5;font-weight:500;user-select:text">${s.notes.replace(/</g,'&lt;')}</div>`:''}
+        ${leg?`<div style="font-size:11px;color:var(--gr);margin-top:4px;font-weight:600">→ Next stop: ${leg.min} min · ${leg.mi} mi</div>`:''}
+      </div>
+    </div>`;
+  });
+  tvTickets.innerHTML = h;
+}
+
+// ════════════════════════════════════════════
+//  SESSION HEARTBEAT (duplicate login detection)
+// ════════════════════════════════════════════
+
+// Write this session's presence to the sheet
+async function writeHeartbeat() {
+  if (!curUser || !gAccessToken) return;
+  const ts = Date.now();
+  const info = SESSION_INFO || {};
+  // Full session record stored as JSON
+  const record = JSON.stringify({ name: curUser.name, sid: SESSION_ID, ts, ...info });
+
+  try {
+    if (isTech && curUser.tech) {
+      // Tech users: write into their column (A=1…K=11)
+      const col = TECHS.indexOf(curUser.tech) + 1;
+      if (col >= 1) await sheetsSetValue(HEARTBEAT_ROW, col, record);
+    } else {
+      // Non-tech users: pack all into col L as JSON blob keyed by SESSION_ID
+      let existing = {};
+      try {
+        const r = await sheetsGet(`Sheet1!L${HEARTBEAT_ROW}`);
+        const raw = r.values?.[0]?.[0] || '';
+        if (raw) existing = JSON.parse(raw);
+      } catch(e) {}
+      existing[SESSION_ID] = JSON.parse(record);
+      // Prune stale entries (>3 min)
+      const cutoff = Date.now() - 3*60*1000;
+      Object.keys(existing).forEach(k => { if ((existing[k].ts||0) < cutoff) delete existing[k]; });
+      await sheetsSetValue(HEARTBEAT_ROW, HEARTBEAT_COL_NONTECHS, JSON.stringify(existing));
+    }
+  } catch(e) {} // heartbeat failures are non-fatal
+}
+
+// Parse a raw cell into a session record object (handles both old pipe format and new JSON)
+function parseSessionRecord(raw) {
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch(e) {}
+  // Legacy fallback: name|sid|ts
+  const parts = raw.split('|');
+  if (parts.length >= 3) return { name: parts[0], sid: parts[1], ts: parseInt(parts[2],10) };
+  return null;
+}
+
+// Format a session record into a human-readable description
+function formatSession(rec, idx) {
+  const loc = [rec.city, rec.region, rec.country].filter(Boolean).join(', ') || rec.timezone || 'Location unknown';
+  const device = [rec.os, rec.browser].filter(Boolean).join(' · ') || 'Unknown device';
+  const ip = rec.ip ? ` · IP: ${rec.ip}` : '';
+  const ago = rec.ts ? Math.round((Date.now()-rec.ts)/1000/60) : '?';
+  return `<div style="background:#131929;border:1px solid #1e2535;border-radius:10px;padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:11px;font-weight:800;color:#e2e8f4;letter-spacing:.5px">SESSION ${idx+1}</span>
+      <span style="font-size:10px;color:#5a6a8a">${ago}m ago</span>
+    </div>
+    <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px">📱 ${device}</div>
+    <div style="font-size:12px;color:#10b981;font-weight:600;margin-bottom:2px">📍 ${loc}${ip}</div>
+    <div style="font-size:10px;color:#5a6a8a">${rec.timezone||''} · ${rec.language||''} · ${rec.screen_res||''}</div>
+  </div>`;
+}
+
+// All active sessions keyed by name (populated by checkDuplicateLogins, used by modal)
+let allActiveSessions = {};
+
+// Read all heartbeats and alert admin if any user appears more than once
+async function checkDuplicateLogins() {
+  if (!curUser || curUser.role !== 'admin') return;
+  try {
+    const resp = await sheetsGet(`Sheet1!A${HEARTBEAT_ROW}:L${HEARTBEAT_ROW}`);
+    const row = resp.values?.[0] || [];
+    const cutoff = Date.now() - 2*60*1000;
+
+    const seen = {}; // name → [record, ...]
+
+    // Tech columns A–K (index 0–10)
+    for (let i = 0; i < 11; i++) {
+      const rec = parseSessionRecord(row[i]);
+      if (!rec || !rec.name || !rec.ts || rec.ts < cutoff) continue;
+      if (!seen[rec.name]) seen[rec.name] = [];
+      seen[rec.name].push(rec);
+    }
+
+    // Non-tech col L (index 11) — JSON blob of {sid: record}
+    try {
+      const blob = row[11];
+      if (blob) {
+        const obj = JSON.parse(blob);
+        Object.values(obj).forEach(rec => {
+          if (!rec || !rec.name || !rec.ts || rec.ts < cutoff) return;
+          if (!seen[rec.name]) seen[rec.name] = [];
+          seen[rec.name].push(rec);
+        });
+      }
+    } catch(e) {}
+
+    allActiveSessions = seen;
+
+    const dupes = Object.entries(seen).filter(([,recs]) => recs.length > 1).map(([name]) => name);
+    const banner = document.getElementById('dupeBanner');
+    const msg    = document.getElementById('dupeBannerMsg');
+    if (dupes.length) {
+      msg.textContent = dupes.join(', ') + (dupes.length === 1 ? ' is' : ' are') + ' logged in from multiple devices';
+      banner.style.display = 'block';
+    }
+  } catch(e) {}
+}
+
+function openSessionModal() {
+  const body = document.getElementById('sessionModalBody');
+  const dupes = Object.entries(allActiveSessions).filter(([,recs]) => recs.length > 1);
+  if (!dupes.length) { body.innerHTML = '<div style="color:#5a6a8a;font-size:13px;text-align:center;padding:20px">No duplicate sessions detected.</div>'; }
+  else {
+    body.innerHTML = dupes.map(([name, recs]) =>
+      `<div>
+        <div style="font-size:11px;font-weight:800;color:#f97316;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">⚠ ${name}</div>
+        <div style="display:flex;flex-direction:column;gap:6px">${recs.map((r,i) => formatSession(r,i)).join('')}</div>
+      </div>`
+    ).join('<div style="height:1px;background:#1e2535;margin:10px 0"></div>');
+  }
+  document.getElementById('sessionModalBg').style.display = 'flex';
+}
+
+function closeSessionModal() {
+  document.getElementById('sessionModalBg').style.display = 'none';
+}
+
+// Kick off heartbeat on login and every 55s
+function startHeartbeat() {
+  // Collect device + geo info first, then write heartbeat
+  collectSessionInfo().then(() => writeHeartbeat());
+  setInterval(writeHeartbeat, 55000);
+}
+
+// ════════════════════════════════════════════
+//  AUTO-REFRESH
+// ════════════════════════════════════════════
+setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
+
+// ── Live clock for tech view datetime header ──
+setInterval(() => {
+  const dtEl = document.getElementById('tvMapDateTime');
+  if (!dtEl || dtEl.style.display === 'none') return;
+  // Also bail if the tech view itself is hidden
+  const tv = document.getElementById('techView');
+  if (!tv || tv.style.display === 'none') return;
+  const now = new Date();
+  dtEl.textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) + ' · ' + now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}, 1000);
+
+// ════════════════════════════════════════════
+//  TOAST
+// ════════════════════════════════════════════
+function toast(msg) {
+  const t=document.createElement('div'); t.className='toast show'; t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),300)},2200);
+}
+</script>
+</body>
+</html>
