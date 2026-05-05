@@ -340,10 +340,16 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
           <span class="maptag">LIVE</span>
         </div>
       </div>
-      <div id="tvMapDateTime" style="padding:6px 18px 10px;font-size:13px;font-weight:600;color:var(--dm2);letter-spacing:.3px;background:var(--sf2);border-bottom:1px solid var(--bd)"></div>
       <div style="width:100%;height:clamp(300px,45vh,480px);position:relative;background:var(--bg);border-radius:0 0 var(--r12) var(--r12);overflow:hidden"><div id="lmapTech" style="position:absolute;inset:0;width:100%;height:100%"></div></div>
     </div>
+    <!-- Bright-orange date/time, sits below the map -->
+    <div id="tvMapDateTime" style="display:none;margin:12px 0 16px;padding:14px 18px;font-size:18px;font-weight:800;color:#ff6a00;letter-spacing:.5px;background:rgba(255,106,0,.08);border:1px solid rgba(255,106,0,.35);border-radius:var(--r12);text-align:center;text-shadow:0 0 14px rgba(255,106,0,.4)"></div>
     <div class="tv-tickets" id="tvTickets"></div>
+    <!-- Vendor Notes (mirrored from admin view, shown below tickets) -->
+    <div class="nsec" id="tvNsec" style="display:none">
+      <div class="nsec-title">Vendor Notes</div>
+      <div class="ngrid" id="tvNgrid"></div>
+    </div>
   </div>
 
 </div>
@@ -1414,7 +1420,12 @@ function renderNotes() {
     {
       header: 'Winn-Dixie',
       color: '#dc2626',
-      body: `Check in and out of service channel\nPin\nTracking`
+      body: `Check in and out of service channel\nPin: 11162360\nTracking:`
+    },
+    {
+      header: 'Synergy Burlington',
+      color: '#a855f7',
+      body: `Check in and out of service channel\nPin: 2222004\nTracking:`
     },
     {
       header: 'Whole Foods',
@@ -1423,12 +1434,20 @@ function renderNotes() {
     },
   ];
   document.getElementById('nsec').style.display='';
-  document.getElementById('ngrid').innerHTML = NOTES.map(n =>
+  const html = NOTES.map(n =>
     `<div class="nc" style="border-top:3px solid ${n.color}">
       <div class="nc-header" style="background:${n.color}18;color:${n.color}">${n.header}</div>
       <div class="nc-body">${n.body.replace(/</g,'&lt;')}</div>
     </div>`
   ).join('');
+  document.getElementById('ngrid').innerHTML = html;
+  // Mirror into the tech homepage section so techs see the same vendor notes below their tickets
+  const tvNsec  = document.getElementById('tvNsec');
+  const tvNgrid = document.getElementById('tvNgrid');
+  if (tvNsec && tvNgrid) {
+    tvNsec.style.display = '';
+    tvNgrid.innerHTML = html;
+  }
 }
 
 // ════════════════════════════════════════════
@@ -1812,9 +1831,10 @@ async function renderTechView(withMap=true) {
   // Show map
   mapSec.style.display='';
   document.getElementById('tvMapTitle').textContent = `${tech}'s Route`;
-  // Set date/time in the dedicated datetime element
+  // Set date/time in the dedicated datetime element (now sits below the map)
   const dtEl = document.getElementById('tvMapDateTime');
   if (dtEl) {
+    dtEl.style.display = '';
     const now = new Date();
     dtEl.textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) + ' · ' + now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }
@@ -2040,7 +2060,10 @@ setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admi
 // ── Live clock for tech view datetime header ──
 setInterval(() => {
   const dtEl = document.getElementById('tvMapDateTime');
-  if (!dtEl || dtEl.closest('#mapsecTech').style.display === 'none') return;
+  if (!dtEl || dtEl.style.display === 'none') return;
+  // Also bail if the tech view itself is hidden
+  const tv = document.getElementById('techView');
+  if (!tv || tv.style.display === 'none') return;
   const now = new Date();
   dtEl.textContent = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) + ' · ' + now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 }, 1000);
