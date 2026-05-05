@@ -222,13 +222,18 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .drive-sec{margin:18px 0}
 .drive-sec-title{font-family:'DM Serif Display',serif;font-size:16px;color:#fff;font-style:italic;margin-bottom:12px;display:flex;align-items:center;gap:10px}
 .drive-sec-title .driveicon{width:18px;height:18px;flex-shrink:0}
-.drive-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
-.drive-btn{background:var(--sf2);border:1px solid var(--bd2);border-radius:var(--r12);padding:14px 10px;color:var(--tx);font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;text-decoration:none;display:flex;flex-direction:column;align-items:center;gap:8px;transition:all .15s;text-align:center;min-height:90px}
-.drive-btn:hover{border-color:var(--ac);background:rgba(59,130,246,.06);transform:translateY(-2px)}
-.drive-btn-icon{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;flex-shrink:0;letter-spacing:0}
-.drive-btn-label{font-size:12px;line-height:1.2;color:var(--tx);font-weight:700;word-break:break-word;letter-spacing:.2px}
-.drive-btn.home .drive-btn-icon{background:linear-gradient(135deg,#3b82f6,#1d4ed8)}
-.drive-empty{padding:14px;text-align:center;color:var(--dm);font-size:11px;border:1px dashed var(--bd2);border-radius:var(--r8)}
+.drive-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(132px,1fr))}
+.drive-btn{position:relative;background:linear-gradient(160deg,var(--sf2) 0%,var(--sf) 100%);border:1px solid var(--bd2);border-radius:14px;padding:16px 10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;text-decoration:none;display:flex;flex-direction:column;align-items:center;gap:10px;transition:transform .18s cubic-bezier(.2,.7,.3,1.2),border-color .15s,box-shadow .2s;text-align:center;min-height:108px;overflow:hidden}
+.drive-btn::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 0%,var(--db-glow,rgba(59,130,246,.18)) 0%,transparent 60%);opacity:0;transition:opacity .2s;pointer-events:none}
+.drive-btn:hover{transform:translateY(-3px);border-color:var(--db-color,var(--ac));box-shadow:0 8px 24px rgba(0,0,0,.4),0 0 0 1px var(--db-color,var(--ac))}
+.drive-btn:hover::before{opacity:1}
+.drive-btn-icon{position:relative;width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--db-bg,linear-gradient(135deg,#3b82f6,#1d4ed8));box-shadow:0 4px 14px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.18);transition:transform .2s}
+.drive-btn:hover .drive-btn-icon{transform:scale(1.06)}
+.drive-btn-icon svg{width:28px;height:28px;color:#fff;stroke-width:1.7;filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
+.drive-btn-label{font-size:12px;line-height:1.25;color:var(--tx);font-weight:700;word-break:break-word;letter-spacing:.1px;position:relative}
+.drive-btn.home{border-color:rgba(59,130,246,.35);background:linear-gradient(160deg,rgba(59,130,246,.12) 0%,rgba(29,78,216,.06) 100%)}
+.drive-btn.home .drive-btn-icon{background:linear-gradient(135deg,#60a5fa,#1d4ed8)}
+.drive-empty{padding:14px;text-align:center;color:var(--dm);font-size:11px;border:1px dashed var(--bd2);border-radius:var(--r8);grid-column:1/-1}
 /* ── SPECIAL COLUMNS ── */
 .spcols{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
 .spcol{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r12);min-width:220px;flex:1;display:flex;flex-direction:column}
@@ -365,8 +370,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     <!-- Google Drive folder buttons (between tickets and vendor notes) -->
     <div class="drive-sec" id="tvDriveSec" style="display:none">
       <div class="drive-sec-title">
-        <svg class="driveicon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-        Drive Folders
+        <svg class="driveicon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
+        Support Files
       </div>
       <div class="drive-grid" id="tvDriveGrid"></div>
     </div>
@@ -443,6 +448,7 @@ const USERS = [
   { name:'Maikol',            pin:'1520', role:'read', tech:'Maikol'    },
   { name:'Jesse',             pin:'1488', role:'read', tech:'Jesse'     },
   { name:'Landon',            pin:'2535', role:'read', tech:'Landon'    },
+
 ];
 
 // ── Sheet Structure ──
@@ -1640,36 +1646,91 @@ async function loadDriveFolders() {
 function renderDriveFolders(parentId, folders) {
   const grid = document.getElementById('tvDriveGrid');
   if (!grid) return;
-  // Soft palette so each button has a distinguishable colored circle.
-  // Hash the folder name to pick a stable color so the same folder always
-  // gets the same color across sessions.
-  const palette = ['#3b82f6','#10b981','#f97316','#eab308','#ec4899','#8b5cf6','#06b6d4','#ef4444','#84cc16','#a855f7'];
-  const colorFor = name => {
+
+  // ── Modern SVG icon library (lucide-inspired stroke style) ──
+  // Each icon is a self-contained <svg> snippet drawn at 28×28 inside a
+  // 24-unit viewBox. Strokes use currentColor so they inherit white fill
+  // from the .drive-btn-icon container.
+  const ICONS = {
+    home: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>`,
+    // Pressure gauge — circular dial with needle, perfect for "Pressure Settings"
+    gauge: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14l4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/><circle cx="12" cy="14" r="1.2" fill="currentColor"/></svg>`,
+    // Schematic / blueprint — grid + diagonal lines
+    blueprint: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>`,
+    // Open manual / book
+    book: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5A2.5 2.5 0 0 1 4.5 4H10v15H4.5A2.5 2.5 0 0 0 2 21.5z"/><path d="M22 6.5A2.5 2.5 0 0 0 19.5 4H14v15h5.5a2.5 2.5 0 0 1 2.5 2.5z"/><path d="M12 4v15"/></svg>`,
+    // Clipboard with checks — checklists & forms
+    checklist: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="16" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M8.5 12l2 2 4-4"/><path d="M9 17h6"/></svg>`,
+    // Keypad — 3x3 grid of keys
+    keypad: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12" cy="8" r="1" fill="currentColor"/><circle cx="16" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="16" cy="12" r="1" fill="currentColor"/><circle cx="8" cy="16" r="1" fill="currentColor"/><circle cx="12" cy="16" r="1" fill="currentColor"/><circle cx="16" cy="16" r="1" fill="currentColor"/></svg>`,
+    // Document with text lines
+    document: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>`,
+    // Circuit board / PLC — chip with traces
+    circuit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/><circle cx="12" cy="12" r="2"/></svg>`,
+    // Map pin
+    mappin: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>`,
+    // Forklift / dock leveler — industrial lift
+    forklift: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h13"/><path d="M5 18V8h7l3 4h3v6"/><path d="M18 8v6"/><path d="M21 6v6"/><circle cx="6" cy="20" r="1.5"/><circle cx="13" cy="20" r="1.5"/></svg>`,
+    // Industrial machine (default for baler/compactor/densifier)
+    machine: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M8 6V3h8v3"/><path d="M8 11h8M8 15h8"/><circle cx="7" cy="20" r="0.5" fill="currentColor"/><circle cx="17" cy="20" r="0.5" fill="currentColor"/></svg>`,
+    // Generic folder fallback
+    folder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+  };
+
+  // ── Keyword → icon + accent color matcher.
+  // Order matters: more specific patterns first. The first matching rule wins.
+  // Accent color is what tints the icon tile and the hover border/glow.
+  const RULES = [
+    { match: /check ?list|forms?/i,                   icon: 'checklist', color: '#10b981' }, // emerald
+    { match: /keypad|keyboard/i,                      icon: 'keypad',    color: '#a855f7' }, // purple
+    { match: /pressure|settings/i,                    icon: 'gauge',     color: '#f97316' }, // orange
+    { match: /scissor|lift|dock|leveler|loading/i,    icon: 'forklift',  color: '#eab308' }, // amber
+    { match: /site ?map|map/i,                        icon: 'mappin',    color: '#ec4899' }, // pink
+    { match: /plc|circuit|wiring|electrical/i,        icon: 'circuit',   color: '#06b6d4' }, // cyan
+    { match: /schematic|blueprint|diagram/i,          icon: 'blueprint', color: '#3b82f6' }, // blue
+    { match: /manual|guide|instruction|book/i,        icon: 'book',      color: '#8b5cf6' }, // violet
+    { match: /paperwork|paper|document|pm /i,         icon: 'document',  color: '#64748b' }, // slate
+    { match: /baler|compactor|densifier|machine|equipment|versa.?pak|vip/i, icon: 'machine', color: '#ef4444' }, // red
+  ];
+
+  const pickIcon = name => {
+    for (const rule of RULES) {
+      if (rule.match.test(name)) return { svg: ICONS[rule.icon], color: rule.color };
+    }
+    // Stable fallback color from name hash so the folder always renders the same
+    const palette = ['#3b82f6','#10b981','#f97316','#eab308','#ec4899','#8b5cf6','#06b6d4','#ef4444'];
     let h = 0;
     for (let i=0; i<name.length; i++) { h = ((h<<5) - h + name.charCodeAt(i)) | 0; }
-    return palette[Math.abs(h) % palette.length];
+    return { svg: ICONS.folder, color: palette[Math.abs(h) % palette.length] };
   };
-  const initials = name => {
-    const parts = name.replace(/[^A-Za-z0-9 ]/g,'').trim().split(/\s+/).filter(Boolean);
-    if (!parts.length) return '📁';
-    if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
-    return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+
+  // Lighten a hex color toward white by `amount` (0–1) for the gradient highlight
+  const lighten = (hex, amt) => {
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const lr = Math.round(r + (255 - r) * amt);
+    const lg = Math.round(g + (255 - g) * amt);
+    const lb = Math.round(b + (255 - b) * amt);
+    return '#' + ((lr << 16) | (lg << 8) | lb).toString(16).padStart(6,'0');
   };
+
   const escapeHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
   // Always-on-top "Homepage" button pointing to the parent folder
-  let html = `<a class="drive-btn home" href="https://drive.google.com/drive/folders/${encodeURIComponent(parentId)}" target="_blank" rel="noopener" title="Open Drive home folder">
-    <span class="drive-btn-icon">🏠</span>
+  let html = `<a class="drive-btn home" href="https://drive.google.com/drive/folders/${encodeURIComponent(parentId)}" target="_blank" rel="noopener" title="Open ${escapeHtml(CONFIG.DRIVE_PARENT_LABEL || 'Drive Home')}" style="--db-color:#3b82f6;--db-glow:rgba(59,130,246,.18)">
+    <span class="drive-btn-icon">${ICONS.home}</span>
     <span class="drive-btn-label">${escapeHtml(CONFIG.DRIVE_PARENT_LABEL || 'Drive Home')}</span>
   </a>`;
 
   if (!folders.length) {
-    html += `<div class="drive-empty" style="grid-column:1/-1">No subfolders found in this Drive folder yet.</div>`;
+    html += `<div class="drive-empty">No subfolders found in this Drive folder yet.</div>`;
   } else {
     folders.forEach(f => {
-      const c = colorFor(f.name);
-      html += `<a class="drive-btn" href="https://drive.google.com/drive/folders/${encodeURIComponent(f.id)}" target="_blank" rel="noopener" title="Open ${escapeHtml(f.name)}">
-        <span class="drive-btn-icon" style="background:linear-gradient(135deg,${c},${c}cc)">${escapeHtml(initials(f.name))}</span>
+      const { svg, color } = pickIcon(f.name);
+      const lighter = lighten(color, 0.25);
+      // CSS custom props drive the icon background, hover border, and glow color
+      html += `<a class="drive-btn" href="https://drive.google.com/drive/folders/${encodeURIComponent(f.id)}" target="_blank" rel="noopener" title="Open ${escapeHtml(f.name)}" style="--db-color:${color};--db-glow:${color}33;--db-bg:linear-gradient(135deg,${lighter},${color})">
+        <span class="drive-btn-icon">${svg}</span>
         <span class="drive-btn-label">${escapeHtml(f.name)}</span>
       </a>`;
     });
