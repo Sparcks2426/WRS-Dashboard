@@ -417,7 +417,7 @@ const CONFIG = {
   SHEET_ID:   '1obxydxHUgxiN4X4Upv66ok6kDyWbnBEkQXVkM_39GOU',
   // Optional: Google Maps API key for faster/more accurate geocoding.
   // Leave blank to use free Nominatim geocoder (slightly slower on first load).
-  MAPS_API_KEY: 'AIzaSyCYEcl6qYfNBew1-Kw_df3yOCbHKphgi2A',
+  MAPS_API_KEY: '',
   // ── GOOGLE DRIVE FOLDER BUTTONS (tech homepage) ──
   // Paste the ID of the parent Drive folder here. The folder + its contents
   // must be shared with everyone who logs in (or set to "anyone with link").
@@ -1973,13 +1973,12 @@ function updateMap() {
   });
   document.getElementById('mfpills').innerHTML=pillH;
 
-  // Sort: by TECHS column order, shop first within each tech, then by row
+  // Sort: by TECHS column order, then by row. Shop tickets follow whatever
+  // position the admin has set — they are no longer force-pinned to slot #1
+  // so dragging a shop ticket to slot #2 (or anywhere) will reroute properly.
   const sortJobs=arr=>arr.slice().sort((a,b)=>{
     const ti=TECHS.indexOf(a.tech)-TECHS.indexOf(b.tech);
     if(ti!==0) return ti;
-    const aShop=SHOP_NAMES_SET.has(a.job)?0:1;
-    const bShop=SHOP_NAMES_SET.has(b.job)?0:1;
-    if(aShop!==bShop) return aShop-bShop;
     return (a.row||0)-(b.row||0);
   });
   const vj=sortJobs(mapTech==='all'?tj:tj.filter(j=>j.tech===mapTech));
@@ -2051,15 +2050,14 @@ async function renderTechView(withMap=true) {
   const tvTickets = document.getElementById('tvTickets');
   const mapSec = document.getElementById('mapsecTech');
 
-  // Get today's green tickets sorted by row (shop is row 6 = first)
+  // Get today's green tickets sorted by row — admin's chosen order is honored,
+  // including any shop ticket dragged out of slot #1.
   const allTechJobs = jobs.filter(j=>j.tech===tech);
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
-  const myJobs = allTechJobs.filter(j=>j.color==='green').sort((a,b)=>{
-    const aShop = SHOP_NAMES_SET.has(a.job)?0:1;
-    const bShop = SHOP_NAMES_SET.has(b.job)?0:1;
-    if(aShop!==bShop) return aShop-bShop; // shop always first
-    return (a.row||0)-(b.row||0);
-  });
+  // Sort by row only — if a shop ticket has been dragged to slot #2 (or any
+  // other slot), respect that position. The route, map numbering, and stop
+  // sequence will all reflect where the admin placed it.
+  const myJobs = allTechJobs.filter(j=>j.color==='green').sort((a,b)=>(a.row||0)-(b.row||0));
 
 
   // Geocode all addresses — skipped on first pass (withMap=false), done by geocodeGreenJobs instead
