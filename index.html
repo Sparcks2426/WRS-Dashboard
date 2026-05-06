@@ -790,6 +790,7 @@ function doRelog() {
 // or when the current token is already past its lifetime.
 let consecutiveAuthFailures = 0;
 const AUTH_FAILURE_THRESHOLD = 3;
+let refreshInFlight = false;
 
 function ensureTokenClient() {
   if (tokenClient) return;
@@ -797,6 +798,8 @@ function ensureTokenClient() {
     client_id: CONFIG.CLIENT_ID,
     scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly',
     callback: resp => {
+      // Always clear in-flight regardless of outcome
+      refreshInFlight = false;
       if (resp.error) {
         consecutiveAuthFailures++;
         console.warn('OAuth callback error (' + consecutiveAuthFailures + '):', resp.error);
@@ -837,59 +840,63 @@ function acquireToken(cb) {
 
 // ── Token refresh strategy ──
 // Google access tokens last ~60 min. We refresh silently every 30 min and
-// also attempt a refresh on each successful API call older than 30 min.
-// The relog banner only appears when a *failed* silent refresh has actually
-// been observed — we don't preemptively warn users that their session is
-// about to expire (which was the source of "I have to log in every hour"
-// complaints — the warning was firing on every refresh cycle).
-function scheduleTokenRefresh() {
-  // Silent refresh every 30 min — well before the ~60 min Google expiry
-  setInterval(() => {
-    if (!curUser) return;
-    ensureTokenClient();
-    try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
-  }, 30 * 60 * 1000);
+// ── Token refresh strategy ──
+// Google access tokens last ~60 min. We refresh silently every 50 min, and
+// also on visibility-return / API failure IF the token is genuinely old.
+// Critically, we never call requestAccessToken speculatively — even with
+// prompt:'', Google can decide to show the account chooser when multiple
+// Google accounts are signed into the browser (which is common for staff
+// devices). So we ONLY trigger a refresh when the token is actually old
+// enough to need it, and we deduplicate concurrent refresh requests.
 
-  // Watchdog: only act if the token is actually past its lifetime AND a
-  // refresh attempt didn't recover it. We attempt a silent refresh first;
-  // the relog banner is surfaced from the OAuth callback only when Google
-  // explicitly returns an error (see ensureTokenClient).
-  setInterval(() => {
-    if (!curUser || !tokenAcquiredAt) return;
-    const age = Date.now() - tokenAcquiredAt;
-    // Only when the token is genuinely expired do we try a silent refresh.
-    // If it succeeds, tokenAcquiredAt advances and life goes on. If it fails,
-    // the OAuth callback shows the relog banner.
-    if (age > TOKEN_LIFETIME_MS) {
-      ensureTokenClient();
-      try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
-    }
-  }, 60 * 1000);
+// Threshold: when the token is older than this, a refresh is allowed.
+// Below this, refresh requests are skipped (the existing token is still good).
+const REFRESH_AGE_THRESHOLD_MS = 50 * 60 * 1000; // 50 min
+
+function tokenIsOld() {
+  if (!tokenAcquiredAt) return true;
+  return (Date.now() - tokenAcquiredAt) > REFRESH_AGE_THRESHOLD_MS;
+}
+
+function trySilentRefresh() {
+  if (!curUser) return;
+  if (refreshInFlight) return; // already trying — don't stack requests
+  if (!tokenIsOld()) return;   // current token still good — leave it alone
+  ensureTokenClient();
+  refreshInFlight = true;
+  // Wrap the existing callback so we can clear the in-flight flag on completion
+  const prevCb = tokenReadyCb;
+  tokenReadyCb = () => {
+    refreshInFlight = false;
+    if (prevCb) prevCb();
+  };
+  try {
+    tokenClient.requestAccessToken({ prompt: '' });
+  } catch(e) {
+    refreshInFlight = false;
+  }
+  // Safety net: clear the flag after 30s in case the callback never fires
+  setTimeout(() => { refreshInFlight = false; }, 30000);
+}
+
+function scheduleTokenRefresh() {
+  // Silent refresh every 50 min — only fires if the token is actually old.
+  setInterval(trySilentRefresh, 5 * 60 * 1000); // check every 5 min, refresh if eligible
 }
 scheduleTokenRefresh();
 
 // ── Visibility-change refresh ──
 // Mobile users (techs in the field) regularly switch between apps, lock their
-// phone, etc. When the dashboard becomes visible again, do a silent token
-// refresh + data reload so the session "wakes up" instead of timing out.
-// This is the single biggest reason field techs reported having to log in
-// every hour — the page was sitting idle in the background, the token
-// expired, and there was nothing reactive to refresh it.
+// phone, etc. When the dashboard becomes visible again, refresh the token
+// IF it's actually old. We don't speculatively refresh — that would cause
+// Google's account chooser to pop up every time the user switches tabs.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (!curUser) return;
-  ensureTokenClient();
-  try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
-  // Also reload data so the user sees fresh tickets the moment they look
+  // Always reload data so user sees fresh tickets, but only refresh the token
+  // if it's actually getting old.
+  trySilentRefresh();
   if (typeof loadData === 'function' && !isSaving) loadData();
-});
-
-// Also refresh on focus — covers desktop browsers where visibilitychange
-// doesn't always fire (e.g. switching between browser windows).
-window.addEventListener('focus', () => {
-  if (!curUser) return;
-  ensureTokenClient();
-  try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
 });
 
 // ════════════════════════════════════════════
