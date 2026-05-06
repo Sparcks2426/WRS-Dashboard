@@ -176,7 +176,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .modal h3{font-family:'DM Serif Display',serif;font-size:20px;color:#fff;margin-bottom:6px}
 .modal .msub{font-size:12px;color:var(--dm2);margin-bottom:20px}
 .modal-btns{display:flex;gap:10px;margin-bottom:0}
-.mbtn{flex:1;padding:12px;border:1px solid var(--bd2);border-radius:var(--r8);background:var(--sf);color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.mbtn{flex:1;padding:12px 10px;border:1px solid var(--bd2);border-radius:var(--r8);background:var(--sf);color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;text-align:center}
 .mbtn:hover,.mbtn.sel{background:var(--ac);border-color:var(--ac);color:#fff}
 .modal textarea{width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;resize:vertical;outline:none;min-height:80px;margin-top:16px;line-height:1.5}
 .modal textarea:focus{border-color:var(--ac)}
@@ -434,18 +434,44 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 </div>
 
 <!-- ── SHOP MODAL ── -->
-<div class="modal-bg" id="shopModalBg">
-  <div class="modal">
-    <h3 id="shopModalTitle">Shop Visit</h3>
-    <div class="msub">Select shop location for this tech</div>
-    <div class="modal-btns">
-      <button class="mbtn" id="btnNorth" onclick="selectShop('North Shop')">🔵 North Shop</button>
-      <button class="mbtn" id="btnSouth" onclick="selectShop('South Shop')">🟢 South Shop</button>
+<div class="modal-bg" id="shopModalBg" onclick="if(event.target===this)closeShopModal()">
+  <div class="modal" style="max-width:420px">
+    <!-- Ticket header -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+      <div style="width:36px;height:36px;border-radius:10px;background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      </div>
+      <div>
+        <h3 id="shopModalTitle" style="font-size:16px;margin:0">Shop Ticket</h3>
+        <div class="msub" style="margin:2px 0 0">Select shop · add location if needed</div>
+      </div>
     </div>
-    <textarea id="shopNoteInput" placeholder="Add notes (optional)..." style="display:none"></textarea>
+
+    <!-- Shop selector -->
+    <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Shop Location</div>
+    <div class="modal-btns" style="margin-bottom:16px">
+      <button class="mbtn" id="btnNorth" onclick="selectShop('North Shop')">
+        <span style="display:block;font-size:11px;font-weight:800;letter-spacing:.5px">🔵 NORTH SHOP</span>
+        <span style="display:block;font-size:10px;font-weight:400;color:rgba(255,255,255,.5);margin-top:3px">W Palm Beach</span>
+      </button>
+      <button class="mbtn" id="btnSouth" onclick="selectShop('South Shop')">
+        <span style="display:block;font-size:11px;font-weight:800;letter-spacing:.5px">🟢 SOUTH SHOP</span>
+        <span style="display:block;font-size:10px;font-weight:400;color:rgba(255,255,255,.5);margin-top:3px">Pompano Beach</span>
+      </button>
+    </div>
+
+    <!-- Divider -->
+    <div style="height:1px;background:var(--bd);margin-bottom:16px"></div>
+
+    <!-- Notes -->
+    <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Ticket Notes <span style="font-weight:500;letter-spacing:0;text-transform:none;color:var(--dm);font-size:10px">(optional)</span></div>
+    <textarea id="shopNoteInput" placeholder="e.g. Pick up parts, Drop off tools, Check in…" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;resize:vertical;outline:none;min-height:72px;line-height:1.5;transition:border-color .15s" onfocus="this.style.borderColor='var(--ac)'" onblur="this.style.borderColor='var(--bd2)'"></textarea>
+
     <div class="modal-footer">
       <button class="mbtn-cancel" onclick="closeShopModal()">Cancel</button>
-      <button class="mbtn-ok" id="shopOkBtn" style="display:none" onclick="confirmShop()">Add to Route ✓</button>
+      <button class="mbtn-ok" id="shopOkBtn" onclick="confirmShop()" style="display:none;background:var(--ac);border:none;border-radius:var(--r8);color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;padding:9px 22px;cursor:pointer;transition:all .15s">
+        Add Ticket ✓
+      </button>
     </div>
   </div>
 </div>
@@ -1255,7 +1281,17 @@ function rBoard() {
     // Header: add row at TOP, then jobs
     h += `<div class="tcol">`;
     // Add row at top
-    if (canWrite) h += `<div class="arow"><input class="ainp" placeholder="New ticket…" id="ai_${tech}" onkeydown="if(event.key==='Enter')addJ('${tech}')"><button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJ('${tech}')">+</button></div>`;
+    if (canWrite) h += `<div class="arow" style="flex-direction:column;gap:4px;padding:7px 8px">
+      <div style="display:flex;gap:5px;width:100%">
+        <input class="ainp" placeholder="New ticket…" id="ai_${tech}" autocomplete="off"
+          onfocus="showAddrField('${tech}')"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}if(event.key==='Escape')hideAddrField('${tech}')">
+        <button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJFull('${tech}')">+</button>
+      </div>
+      <input class="ainp" placeholder="Address (optional)…" id="ai_addr_${tech}" autocomplete="off"
+        style="display:none;width:100%;font-size:11px"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}if(event.key==='Escape')hideAddrField('${tech}')">
+    </div>`;
     // Count: if we merged onto an existing job, the shop is NOT a separate card,
     // so don't add +1 to the count.
     const shopCount = (sv && sv.shop && !mergedShopOntoJob) ? 1 : 0;
@@ -1271,13 +1307,15 @@ function rBoard() {
       stopOffset = 1;
       const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
       const dark = ['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
-      h += `<div class="jc" style="border-left-color:${tc};background:rgba(255,255,255,.05);cursor:default">
-        <div style="width:22px;height:22px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px">1</div>
+      const shopColor = sv.shop === 'North Shop' ? '#3b82f6' : '#10b981';
+      h += `<div class="jc" style="border-left-color:${shopColor};background:${shopColor}10;cursor:default">
+        <button type="button" class="jnumbtn" onclick="event.stopPropagation();openShopNoteInline('${tech}')" title="${sv.notes?'Edit note':'Add note'}" style="width:22px;height:22px;border-radius:50%;background:${shopColor};color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px;border:none;cursor:pointer;padding:0;position:relative">1${sv.notes?'<span class="jnumdot"></span>':''}</button>
         <div class="jinfo">
           <span class="jn">${sv.shop}</span>
           ${sv.notes?`<span class="jnotes">${sv.notes.replace(/</g,'&lt;')}</span>`:''}
           ${addr?`<span class="ja">📍 ${addr}</span>`:''}
         </div>
+        ${canWrite?`<button class="db" onclick="event.stopPropagation();clearShop('${tech}')" title="Remove shop ticket">✕</button>`:''}
       </div>`;
     }
     if (!tj.length && !(sv && sv.shop)) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
@@ -1461,6 +1499,46 @@ async function runMorningSortIfNeeded() {
   }
 }
 
+function showAddrField(tech) {
+  const addrInp = document.getElementById('ai_addr_'+tech);
+  if (addrInp) addrInp.style.display = 'block';
+}
+function hideAddrField(tech) {
+  const addrInp = document.getElementById('ai_addr_'+tech);
+  if (addrInp) { addrInp.style.display = 'none'; addrInp.value = ''; }
+  const nameInp = document.getElementById('ai_'+tech);
+  if (nameInp) nameInp.blur();
+}
+
+// addJFull: reads both name + address fields, builds the combined cell value
+function addJFull(tech) {
+  if (!canWrite) return;
+  const nameInp = document.getElementById('ai_'+tech);
+  const addrInp = document.getElementById('ai_addr_'+tech);
+  const name = nameInp?.value.trim();
+  const addr = addrInp?.value.trim();
+  if (!name) return;
+  // Build the combined value exactly as parseJob expects: "Name, Address"
+  const v = addr ? `${name}, ${addr}` : name;
+  // Clear inputs and hide address row
+  nameInp.value = '';
+  if (addrInp) { addrInp.value = ''; addrInp.style.display = 'none'; }
+  const parsed = parseJob(v);
+  const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
+  let targetRow = null;
+  for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
+  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
+  const col = TECHS.indexOf(tech)+1;
+  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
+  jobs.push(newJob);
+  render(); updateMap();
+  isSaving = true;
+  Promise.all([sheetsSetValue(targetRow, col, v), sheetsSetBackground(targetRow, col, '#00ff00')])
+    .then(() => geocodeGreenJobs().then(()=>updateMap()))
+    .catch(()=>toast('Save failed'))
+    .finally(() => { isSaving = false; loadData(); });
+}
+
 function addJ(tech) {
   if (!canWrite) return;
   const inp = document.getElementById('ai_'+tech), v = inp?.value.trim();
@@ -1589,6 +1667,20 @@ function _writeJobNote(j, noteText) {
 
 function saveJobNote() {
   if (_activeJobNoteId == null) return;
+  // Shop note path
+  if (typeof _activeJobNoteId === 'string' && _activeJobNoteId.startsWith('__shop__')) {
+    const tech = _activeJobNoteId.replace('__shop__','');
+    const note = (document.getElementById('jnotepopText').value || '').trim();
+    closeJobNote();
+    if (shopVisits[tech]) {
+      shopVisits[tech].notes = note;
+      localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+      const col = TECHS.indexOf(tech) + 1;
+      sheetsSetValue(26, col, note ? 'SHOPNOTE:'+note : '').catch(()=>{});
+    }
+    render();
+    return;
+  }
   const j = jobs.find(x => x.id === _activeJobNoteId);
   if (!j) { closeJobNote(); return; }
   const note = (document.getElementById('jnotepopText').value || '').trim();
@@ -1601,6 +1693,19 @@ function saveJobNote() {
 
 function clearJobNote() {
   if (_activeJobNoteId == null) return;
+  // Shop note path
+  if (typeof _activeJobNoteId === 'string' && _activeJobNoteId.startsWith('__shop__')) {
+    const tech = _activeJobNoteId.replace('__shop__','');
+    closeJobNote();
+    if (shopVisits[tech]) {
+      shopVisits[tech].notes = '';
+      localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+      const col = TECHS.indexOf(tech) + 1;
+      sheetsSetValue(26, col, '').catch(()=>{});
+    }
+    render();
+    return;
+  }
   const j = jobs.find(x => x.id === _activeJobNoteId);
   if (!j) { closeJobNote(); return; }
   j.notes = '';
@@ -1929,20 +2034,20 @@ function openShopModal(tech) {
   if (!canWrite) return;
   shopModalTech = tech;
   shopModalSelected = shopVisits[tech]?.shop || null;
-  document.getElementById('shopModalTitle').textContent = `${tech} — Shop Visit`;
-  document.getElementById('shopNoteInput').style.display = shopModalSelected ? 'block' : 'none';
+  document.getElementById('shopModalTitle').textContent = `${tech} — Shop Ticket`;
   document.getElementById('shopNoteInput').value = shopVisits[tech]?.notes || '';
   document.getElementById('shopOkBtn').style.display = shopModalSelected ? 'block' : 'none';
   document.getElementById('btnNorth').classList.toggle('sel', shopModalSelected==='North Shop');
   document.getElementById('btnSouth').classList.toggle('sel', shopModalSelected==='South Shop');
   document.getElementById('shopModalBg').classList.add('open');
+  // Focus notes after brief delay
+  setTimeout(() => { if (shopModalSelected) document.getElementById('shopNoteInput').focus(); }, 100);
 }
 
 function selectShop(shop) {
   shopModalSelected = shop;
   document.getElementById('btnNorth').classList.toggle('sel', shop==='North Shop');
   document.getElementById('btnSouth').classList.toggle('sel', shop==='South Shop');
-  document.getElementById('shopNoteInput').style.display = 'block';
   document.getElementById('shopOkBtn').style.display = 'block';
   document.getElementById('shopNoteInput').focus();
 }
@@ -1999,6 +2104,29 @@ async function clearShop(tech) {
 function closeShopModal() {
   document.getElementById('shopModalBg').classList.remove('open');
   shopModalTech = null; shopModalSelected = null;
+}
+
+// Open the per-job note popup pre-loaded with the shop ticket's notes.
+// Clicking the circle badge on a shop card triggers this.
+function openShopNoteInline(tech) {
+  if (!canWrite) return;
+  const sv = shopVisits[tech];
+  if (!sv || !sv.shop) return;
+  // Re-use the existing per-job note popup but wire Save/Clear to shop note
+  _activeJobNoteId = '__shop__' + tech;
+  const pop  = document.getElementById('jnotepop');
+  const bg   = document.getElementById('jnotebg');
+  const ta   = document.getElementById('jnotepopText');
+  const lbl  = document.getElementById('jnotepopJob');
+  const clr  = document.getElementById('jnotepopClear');
+  const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
+  lbl.textContent = sv.shop + (addr ? ' — ' + addr : '');
+  ta.value = sv.notes || '';
+  clr.style.display = (sv.notes && String(sv.notes).trim()) ? '' : 'none';
+  bg.classList.add('show');
+  pop.classList.add('show');
+  pop.style.left = '50%'; pop.style.top = '50%'; pop.style.transform = 'translate(-50%,-50%)';
+  setTimeout(() => ta.focus(), 50);
 }
 // Close modal on background click
 document.getElementById('shopModalBg').addEventListener('click', function(e) {
