@@ -783,6 +783,14 @@ function doRelog() {
   }
 }
 
+// Track consecutive silent-refresh failures so we don't surface the relog
+// banner on a single transient error (network blip, race between visibility
+// refresh and the scheduled refresh, etc.). The banner only appears when
+// silent refresh has failed enough times that we genuinely can't recover —
+// or when the current token is already past its lifetime.
+let consecutiveAuthFailures = 0;
+const AUTH_FAILURE_THRESHOLD = 3;
+
 function ensureTokenClient() {
   if (tokenClient) return;
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -790,14 +798,25 @@ function ensureTokenClient() {
     scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly',
     callback: resp => {
       if (resp.error) {
-        // Silent refresh failed — surface the relog banner
-        console.warn('OAuth callback error:', resp.error);
-        showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
-        setSyncState('error');
+        consecutiveAuthFailures++;
+        console.warn('OAuth callback error (' + consecutiveAuthFailures + '):', resp.error);
+        // Only show the relog banner if we've genuinely lost the session:
+        // either we never had a token, or the existing one has expired AND
+        // multiple silent refresh attempts have failed.
+        const tokenIsExpired = !tokenAcquiredAt || (Date.now() - tokenAcquiredAt) > TOKEN_LIFETIME_MS;
+        if (tokenIsExpired && consecutiveAuthFailures >= AUTH_FAILURE_THRESHOLD) {
+          showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+          setSyncState('error');
+        }
+        // If the token is still valid, swallow the error silently — the
+        // current gAccessToken is still good, the next API call will work,
+        // and we'll retry the refresh on the next interval tick.
+        if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
         return;
       }
       gAccessToken = resp.access_token;
       tokenAcquiredAt = Date.now();
+      consecutiveAuthFailures = 0; // reset on success
       hideRelogBanner();
       if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
     },
@@ -816,27 +835,62 @@ function acquireToken(cb) {
   tryAcquire();
 }
 
-// ── Silent token refresh every 45 min (tokens last ~60 min) ──
-// Plus a watchdog that triggers the relog banner if a refresh hasn't
-// succeeded in the last 55 min.
+// ── Token refresh strategy ──
+// Google access tokens last ~60 min. We refresh silently every 30 min and
+// also attempt a refresh on each successful API call older than 30 min.
+// The relog banner only appears when a *failed* silent refresh has actually
+// been observed — we don't preemptively warn users that their session is
+// about to expire (which was the source of "I have to log in every hour"
+// complaints — the warning was firing on every refresh cycle).
 function scheduleTokenRefresh() {
+  // Silent refresh every 30 min — well before the ~60 min Google expiry
   setInterval(() => {
-    if (!curUser) return; // not logged in, nothing to refresh
+    if (!curUser) return;
     ensureTokenClient();
-    tokenClient.requestAccessToken({ prompt: '' }); // always silent — no consent screen
-  }, 45 * 60 * 1000);
+    try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
+  }, 30 * 60 * 1000);
 
-  // Watchdog: every 60s, check if our token is older than its lifetime.
-  // If yes, surface the relog banner so the user knows to re-auth.
+  // Watchdog: only act if the token is actually past its lifetime AND a
+  // refresh attempt didn't recover it. We attempt a silent refresh first;
+  // the relog banner is surfaced from the OAuth callback only when Google
+  // explicitly returns an error (see ensureTokenClient).
   setInterval(() => {
     if (!curUser || !tokenAcquiredAt) return;
     const age = Date.now() - tokenAcquiredAt;
-    if (age > TOKEN_LIFETIME_MS - 5*60*1000) { // 5 min before expiry
-      showRelogBanner('Your Google session is about to expire — please re-login to keep syncing.');
+    // Only when the token is genuinely expired do we try a silent refresh.
+    // If it succeeds, tokenAcquiredAt advances and life goes on. If it fails,
+    // the OAuth callback shows the relog banner.
+    if (age > TOKEN_LIFETIME_MS) {
+      ensureTokenClient();
+      try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
     }
   }, 60 * 1000);
 }
 scheduleTokenRefresh();
+
+// ── Visibility-change refresh ──
+// Mobile users (techs in the field) regularly switch between apps, lock their
+// phone, etc. When the dashboard becomes visible again, do a silent token
+// refresh + data reload so the session "wakes up" instead of timing out.
+// This is the single biggest reason field techs reported having to log in
+// every hour — the page was sitting idle in the background, the token
+// expired, and there was nothing reactive to refresh it.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!curUser) return;
+  ensureTokenClient();
+  try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
+  // Also reload data so the user sees fresh tickets the moment they look
+  if (typeof loadData === 'function' && !isSaving) loadData();
+});
+
+// Also refresh on focus — covers desktop browsers where visibilitychange
+// doesn't always fire (e.g. switching between browser windows).
+window.addEventListener('focus', () => {
+  if (!curUser) return;
+  ensureTokenClient();
+  try { tokenClient.requestAccessToken({ prompt: '' }); } catch(e){}
+});
 
 // ════════════════════════════════════════════
 //  LOGIN / LOGOUT
@@ -1070,6 +1124,7 @@ async function loadData() {
         const shopCoords = SHOP_LOCATIONS[parsed.name];
         const tech = TECHS[ci] || 'Unknown';
         const j = { id: -(ci+1), tech, job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
+          isShop: true,
           lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
           lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
         if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
@@ -1150,10 +1205,12 @@ async function loadData() {
     renderNotes();
 
     // Geocode green jobs in background, then do the full map render with all coords
-    geocodeGreenJobs().then(() => { if (isTech && !viewingAll) renderTechView(true); else updateMap(); });
-
-    // Morning auto-sort: runs once after 6 AM, writes order to sheet
-    runMorningSortIfNeeded();
+    geocodeGreenJobs().then(() => {
+      if (isTech && !viewingAll) renderTechView(true); else updateMap();
+      // Geocode tech home addresses (once) so static home dots can be drawn.
+      // Refresh the map markers when done so newly-resolved coords appear.
+      geocodeTechHomes().then(() => { if (!isTech || viewingAll) renderHomeDots(); });
+    });
 
   } catch(e) {
     setSyncState('error');
@@ -1251,7 +1308,12 @@ function rBoard() {
   let h = '';
   const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : TECHS;
   visibleTechs.forEach(tech => {
-    const tj = fj.filter(j => j.tech===tech);
+    // Exclude row-25 shop entries from the regular ticket list — they're
+    // rendered as a standalone shop card from shopVisits[tech] further down.
+    // Without this filter, the shop entry from row 25 leaks into tj and gets
+    // re-rendered as a regular green job card (and worse, gets swept up by
+    // autoSortTech which rewrites it into rows 6–18 with a hyphen format).
+    const tj = fj.filter(j => j.tech===tech && !j.isShop);
     if (search && !tj.length) return;
     const tc = TC[tech]||'#888';
     const sv = shopVisits[tech];
@@ -1283,14 +1345,13 @@ function rBoard() {
     // Add row at top
     if (canWrite) h += `<div class="arow" style="flex-direction:column;gap:4px;padding:7px 8px">
       <div style="display:flex;gap:5px;width:100%">
-        <input class="ainp" placeholder="New ticket…" id="ai_${tech}" autocomplete="off"
-          onfocus="showAddrField('${tech}')"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}if(event.key==='Escape')hideAddrField('${tech}')">
+        <input class="ainp" placeholder="New ticket name…" id="ai_${tech}" autocomplete="off"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();const a=document.getElementById('ai_addr_${tech}');if(a)a.focus();}">
         <button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJFull('${tech}')">+</button>
       </div>
-      <input class="ainp" placeholder="Address (optional)…" id="ai_addr_${tech}" autocomplete="off"
-        style="display:none;width:100%;font-size:11px"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}if(event.key==='Escape')hideAddrField('${tech}')">
+      <input class="ainp" placeholder="Address (required)…" id="ai_addr_${tech}" autocomplete="off"
+        style="width:100%;font-size:11px"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}">
     </div>`;
     // Count: if we merged onto an existing job, the shop is NOT a separate card,
     // so don't add +1 to the count.
@@ -1385,144 +1446,34 @@ function jobCard(j, editable, stopNum, techColor) {
 }
 
 // ── Job mutations ──
-// ── Auto-sort: nearest-neighbor from first job ──
-// ── Sort a single tech's column by nearest-neighbor from home/shop ──
-// Returns true if sort was written to sheet, false if skipped/failed
-async function autoSortTech(tech) {
-  const techJobs = jobs.filter(j => j.tech === tech && j.color === 'green')
-                       .sort((a,b) => a.row - b.row);
-  if (techJobs.length < 2) return false;
 
-  // Geocode any missing addresses
-  for (const j of techJobs) {
-    if (!j.lat && j.address) {
-      const c = await geocodeOne(j.address);
-      if (c) { j.lat = c.lat; j.lng = c.lng; }
-      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
-    }
-  }
-
-  const geocoded = techJobs.filter(j => j.lat && j.lng);
-  const ungeocoded = techJobs.filter(j => !j.lat || !j.lng);
-  if (geocoded.length < 2) return false;
-
-  // Origin: shop (if assigned today) → home → first job
-  let originLat = null, originLng = null;
-  const sv = shopVisits[tech];
-  if (sv?.shop && SHOP_LOCATIONS[sv.shop]) {
-    const shopAddr = SHOP_LOCATIONS[sv.shop].address;
-    const sc = geoCache[shopAddr] || await geocodeOne(shopAddr);
-    if (sc) { originLat = sc.lat; originLng = sc.lng; }
-    if (!CONFIG.MAPS_API_KEY && !geoCache[shopAddr]) await new Promise(r => setTimeout(r, 1200));
-  }
-  if (originLat === null) {
-    const home = TECH_START_LOCATIONS[tech];
-    if (home?.lat && home?.lng) {
-      originLat = home.lat; originLng = home.lng;
-    } else if (home?.address) {
-      const hc = await geocodeOne(home.address);
-      if (hc) { TECH_START_LOCATIONS[tech].lat=hc.lat; TECH_START_LOCATIONS[tech].lng=hc.lng; originLat=hc.lat; originLng=hc.lng; }
-      if (!CONFIG.MAPS_API_KEY) await new Promise(r => setTimeout(r, 1200));
-    }
-  }
-  if (originLat === null) { originLat=geocoded[0].lat; originLng=geocoded[0].lng; }
-
-  // Nearest-neighbor greedy sort from origin
-  const sorted = [], remaining = [...geocoded];
-  let curLat=originLat, curLng=originLng;
-  while (remaining.length) {
-    let bestIdx=0, bestDist=Infinity;
-    remaining.forEach((j,i) => {
-      const d = Math.pow(j.lat-curLat,2) + Math.pow(j.lng-curLng,2);
-      if (d < bestDist) { bestDist=d; bestIdx=i; }
-    });
-    const next = remaining.splice(bestIdx,1)[0];
-    sorted.push(next); curLat=next.lat; curLng=next.lng;
-  }
-  const finalOrder = [...sorted, ...ungeocoded];
-
-  // Skip if already in correct order
-  if (!finalOrder.some((j,i) => j.id !== techJobs[i]?.id)) return false;
-
-  // Write new order to sheet
-  const rowSlots = techJobs.map(j=>j.row).sort((a,b)=>a-b);
-  const jobData = {};
-  techJobs.forEach(j => { jobData[j.id] = { val: j.job+(j.address?' - '+j.address:''), hex: STATUS_TO_HEX[j.color]||'#ffffff' }; });
-
-  for (let i=0; i<finalOrder.length; i++) {
-    const j=finalOrder[i], newRow=rowSlots[i], d=jobData[j.id];
-    await sheetsSetValue(newRow, j.col, d.val);
-    await sheetsSetBackground(newRow, j.col, d.hex);
-    j.row = newRow;
-  }
-  return true;
-}
-
-// ── Morning auto-sort: runs once at 6 AM each day ──
-// Keyed by date string in localStorage so it only fires once per day
-async function runMorningSortIfNeeded() {
-  if (!canWrite) return; // only write-access users trigger the sort
-  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
-  const key = 'wrs_sorted_' + today;
-  if (localStorage.getItem(key)) return; // already sorted today
-
-  const now = new Date();
-  const hour = now.getHours();
-  if (hour < 6) return; // before 6 AM — don't sort yet
-
-  // Mark as sorted before starting so concurrent tabs don't double-sort
-  localStorage.setItem(key, '1');
-
-  // Clean up old sort keys (keep only today's)
-  Object.keys(localStorage)
-    .filter(k => k.startsWith('wrs_sorted_') && k !== key)
-    .forEach(k => localStorage.removeItem(k));
-
-  console.log('[MorningSort] Starting daily sort at', now.toLocaleTimeString());
-  isSaving = true;
-  let sortedCount = 0;
-  try {
-    for (const tech of TECHS) {
-      const did = await autoSortTech(tech);
-      if (did) { sortedCount++; console.log('[MorningSort] Sorted', tech); }
-    }
-    if (sortedCount > 0) {
-      render(); updateMap();
-      toast(`✓ Morning routes set for ${sortedCount} tech${sortedCount>1?'s':''}`);
-    }
-  } catch(err) {
-    console.error('[MorningSort] Error:', err);
-    // Remove the key so it can retry on next refresh
-    localStorage.removeItem(key);
-  } finally {
-    isSaving = false;
-  }
-}
-
-function showAddrField(tech) {
-  const addrInp = document.getElementById('ai_addr_'+tech);
-  if (addrInp) addrInp.style.display = 'block';
-}
-function hideAddrField(tech) {
-  const addrInp = document.getElementById('ai_addr_'+tech);
-  if (addrInp) { addrInp.style.display = 'none'; addrInp.value = ''; }
-  const nameInp = document.getElementById('ai_'+tech);
-  if (nameInp) nameInp.blur();
-}
-
-// addJFull: reads both name + address fields, builds the combined cell value
+// addJFull: reads both name + address fields, builds the combined cell value.
+// Address is REQUIRED — refuse to save if empty.
 function addJFull(tech) {
   if (!canWrite) return;
   const nameInp = document.getElementById('ai_'+tech);
   const addrInp = document.getElementById('ai_addr_'+tech);
   const name = nameInp?.value.trim();
   const addr = addrInp?.value.trim();
-  if (!name) return;
-  // Build the combined value exactly as parseJob expects: "Name, Address"
-  const v = addr ? `${name}, ${addr}` : name;
-  // Clear inputs and hide address row
+  if (!name) {
+    toast('Ticket name is required');
+    nameInp?.focus();
+    return;
+  }
+  if (!addr) {
+    toast('Address is required');
+    // Flash the address border red briefly so the user notices
+    if (addrInp) {
+      addrInp.style.borderColor = 'var(--rd)';
+      addrInp.focus();
+      setTimeout(()=>{ addrInp.style.borderColor=''; }, 1600);
+    }
+    return;
+  }
+  const v = `${name}, ${addr}`;
+  // Clear inputs
   nameInp.value = '';
-  if (addrInp) { addrInp.value = ''; addrInp.style.display = 'none'; }
+  addrInp.value = '';
   const parsed = parseJob(v);
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
   let targetRow = null;
@@ -2255,12 +2206,65 @@ function bindDrag() {
 // ════════════════════════════════════════════
 //  MAP — ADMIN
 // ════════════════════════════════════════════
+let homeLayer = null;
+let homesGeocoded = false;
+
 function initMap() {
   if (lmap) return;
   lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
   markerLayer = L.layerGroup().addTo(lmap);
   routeLayer  = L.layerGroup().addTo(lmap);
+  homeLayer   = L.layerGroup().addTo(lmap);
+}
+
+// Geocode all tech home addresses once. Cached coords stick on TECH_START_LOCATIONS.
+// PRIVACY: only run this for admin + write-access sessions (dispatchers like
+// John Kelly and Dan Martin who plan routes). Read-only techs never have
+// their browser fetch other techs' home coordinates.
+async function geocodeTechHomes() {
+  if (homesGeocoded) return;
+  if (!canWrite) return;
+  for (const tech of TECHS) {
+    const h = TECH_START_LOCATIONS[tech];
+    if (!h || !h.address) continue;
+    if (h.lat && h.lng) continue;
+    try {
+      const c = await geocodeOne(h.address);
+      if (c) { h.lat = c.lat; h.lng = c.lng; }
+    } catch(e) {}
+    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1100));
+  }
+  homesGeocoded = true;
+}
+
+// Render small static dots for each tech's home location, colored to match
+// their tech color.
+// PRIVACY: home dots are visible to admin + write-access users (dispatchers
+// who need them to plan routes). Read-only techs never see them — we don't
+// want employees knowing where coworkers live. The canWrite gate is the
+// hard guard; even if a tech somehow reaches the admin view via "View All",
+// they won't see the dots.
+function renderHomeDots() {
+  if (!homeLayer) return;
+  homeLayer.clearLayers();
+  // Hard role gate — admin + write only.
+  if (!canWrite) return;
+  if (mapTech !== 'all') return; // only show on ALL view
+  for (const tech of TECHS) {
+    const h = TECH_START_LOCATIONS[tech];
+    if (!h?.lat || !h?.lng) continue;
+    const tc = TC[tech] || '#888';
+    const dark = ['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
+    const icon = L.divIcon({
+      className:'',
+      html:`<div style="width:10px;height:10px;border-radius:50%;background:${tc};border:1.5px solid ${dark?'rgba(255,255,255,.85)':'rgba(0,0,0,.6)'};box-shadow:0 0 0 1px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.5)"></div>`,
+      iconSize:[10,10], iconAnchor:[5,5]
+    });
+    L.marker([h.lat, h.lng], { icon, interactive: true, keyboard: false })
+      .addTo(homeLayer)
+      .bindPopup(`<b>${tech}</b><br><span style="color:${tc};font-weight:700">Home base</span><br><small>${h.address || ''}</small>`);
+  }
 }
 
 function togMap() {
@@ -2310,6 +2314,7 @@ function updateMap() {
     markersArr.push({mk,lat:j.lat,lng:j.lng}); bounds.push([j.lat,j.lng]);
   });
   if(bounds.length) setTimeout(()=>lmap.fitBounds(bounds,{padding:[60,60],maxZoom:11}),200);
+  renderHomeDots();
   renderMapList(vj,null,null,null);
   if(mapTech!=='all'&&vj.length>=2){
     const wp=vj.map(j=>j.lng+','+j.lat).join(';');
