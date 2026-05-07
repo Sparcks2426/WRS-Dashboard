@@ -274,8 +274,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 </head>
 <body>
 
-<!-- ── CONFIG BANNER (shown when PROXY_URL not set) ── -->
-<div id="configBanner">⚠ Set your PROXY_URL and PROXY_SECRET in the CONFIG section at the top of this file before deploying. See Code.gs for proxy setup.</div>
+<!-- ── CONFIG BANNER (shown when CLIENT_ID not set) ── -->
+<div id="configBanner">⚠ Set your GOOGLE_CLIENT_ID and SHEET_ID in the CONFIG section at the top of this file before deploying.</div>
 
 <!-- ── DUPLICATE LOGIN BANNER + MODAL (admin only) ── -->
 <div id="dupeBanner" style="display:none;position:fixed;top:0;left:0;right:0;background:#b45309;color:#fff;font-family:Inter,sans-serif;font-size:12px;font-weight:700;text-align:center;padding:7px 40px;z-index:99998;letter-spacing:.3px">
@@ -477,23 +477,13 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 </div>
 
 <!-- Leaflet loaded lazily after login -->
-<!-- Google Identity Services no longer needed — auth goes through the proxy -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 // ════════════════════════════════════════════════════
 //  ★  CONFIG — EDIT THESE TWO VALUES BEFORE DEPLOYING
 // ════════════════════════════════════════════════════
 const CONFIG = {
-  // ── PROXY (Apps Script web app) ──
-  // The dashboard talks to this URL instead of Google Sheets directly.
-  // The proxy runs as Jon-Pol so end users (techs, dispatchers) never
-  // have to authenticate to Google. They authenticate to the dashboard
-  // with their PIN; the dashboard passes PROXY_SECRET to the proxy on
-  // every call. See Code.gs for deployment instructions.
-  PROXY_URL:    'https://script.google.com/macros/s/AKfycbwxnsSizsRM1Btr7Xsv8fKhkWaieCsGDOVqVxDF_Rgaeo9I4dNrXvYZCog1bECMm2jm/exec',
-  PROXY_SECRET: '8bd95664-95f3-45a1-9fd3-34b7dbd74f3eef29071b-5833-4303-86f6-0eaa7a57d779',
-
-  // Sheet ID is still used by the proxy server-side; kept here for any
-  // remaining client-side references (e.g. file deep-links).
+  CLIENT_ID:  '498691721108-shisjr4a63ot7sg3v0ss1qt96bbl15q4.apps.googleusercontent.com',
   SHEET_ID:   '1obxydxHUgxiN4X4Upv66ok6kDyWbnBEkQXVkM_39GOU',
   // Optional: Google Maps API key for faster/more accurate geocoding.
   // Leave blank to use free Nominatim geocoder (slightly slower on first load).
@@ -625,6 +615,7 @@ const LOC = {
 // ════════════════════════════════════════════
 //  STATE
 // ════════════════════════════════════════════
+let gAccessToken = null;   // Google OAuth access token
 let curUser = null;        // { name, role, tech? }
 let canWrite = false;
 let isTech = false;
@@ -659,7 +650,6 @@ const TECH_START_LOCATIONS = {
 
 let shopVisits = {}; // techName → { shop, notes }
 let isSaving = false; // blocks auto-refresh during sheet writes
-let loadingData = false; // dedupe concurrent loadData calls (visibility race etc)
 
 // ── Session heartbeat ──
 const SESSION_ID = Math.random().toString(36).slice(2,10); // unique per tab/load
@@ -713,33 +703,8 @@ let shopModalTech = null, shopModalSelected = null;
 //  STARTUP
 // ════════════════════════════════════════════
 (function init() {
-  if (!CONFIG.PROXY_URL || CONFIG.PROXY_URL.startsWith('PASTE_')) {
+  if (CONFIG.CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com') {
     document.getElementById('configBanner').style.display = 'block';
-  }
-  // Pre-warm Leaflet: kick off the download immediately so it can finish
-  // in parallel with proxy calls. Without this, the JS would only start
-  // downloading when the user clicks Sign In, racing the proxy load.
-  // We only pre-warm if a user is already signed in (saved session) so
-  // we don't waste bandwidth on first-time visitors who might bounce.
-  // Inlined here (not via loadLeaflet) to avoid TDZ on the leafletLoaded
-  // let-binding declared further down.
-  if (localStorage.getItem('wrs_user')) {
-    try {
-      const cssEl = document.getElementById('leafletCSS');
-      if (cssEl && cssEl.getAttribute('data-src')) cssEl.href = cssEl.getAttribute('data-src');
-      const s = document.createElement('script');
-      s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-      s.onload = () => {
-        // Mark as loaded so loadLeaflet's later calls fire their callback
-        // immediately. Also re-render the map if data has already arrived.
-        leafletLoaded = true;
-        if (typeof jobs !== 'undefined' && jobs && jobs.length) {
-          if (isTech && !viewingAll) renderTechView(true);
-          else updateMap();
-        }
-      };
-      document.head.appendChild(s);
-    } catch(e) {}
   }
   // Populate login name select
   const sel = document.getElementById('loginName');
@@ -761,17 +726,13 @@ let shopModalTech = null, shopModalSelected = null;
   // Load saved shop visits from localStorage (overridden by sheet on first loadData)
   try { shopVisits = JSON.parse(localStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
 
-  // Auto-login: permanent — restore session silently whenever a saved user exists.
-  // We verify the proxy is reachable in the background; if it fails, the relog
-  // banner will surface from inside loadData() / proxyCall(). The dashboard
-  // shows immediately so the user isn't blocked on a network probe.
+  // Auto-login: permanent — restore session silently whenever a saved user exists
   try {
     const saved = localStorage.getItem('wrs_user');
     if (saved) {
       const u = JSON.parse(saved);
       if (u && u.name) {
-        startDash(u);
-        return;
+        acquireToken(() => startDash(u)); return;
       }
     }
   } catch(e) {}
@@ -780,74 +741,19 @@ let shopModalTech = null, shopModalSelected = null;
 document.getElementById('loginPin').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
 // ════════════════════════════════════════════
-//  PROXY CLIENT (Apps Script web app)
+//  GOOGLE OAUTH (GIS token client — implicit)
 // ════════════════════════════════════════════
-// All sheet read/write goes through this single function. The proxy runs
-// as Jon-Pol on Google's servers and is gated by PROXY_SECRET. End users
-// never authenticate to Google — they authenticate to the dashboard with
-// their PIN, and the dashboard sends PROXY_SECRET to the proxy.
-//
-// On failure, callers throw — so existing try/catch blocks in loadData(),
-// the save paths, etc. continue to work without changes.
+let tokenClient = null;
+let tokenReadyCb = null;
+let tokenAcquiredAt = 0;       // ms timestamp of last successful token
+const TOKEN_LIFETIME_MS = 60 * 60 * 1000; // Google access tokens last ~60 min
 
-async function proxyCall(op, payload) {
-  if (!CONFIG.PROXY_URL || CONFIG.PROXY_URL.startsWith('PASTE_')) {
-    showRelogBanner('Dashboard is not configured — proxy URL missing. Contact admin.');
-    throw new Error('PROXY_URL not configured');
-  }
-  const body = Object.assign({ op: op, secret: CONFIG.PROXY_SECRET }, payload || {});
-  const t0 = performance.now();
-  // Important: use text/plain to avoid CORS preflight on Apps Script.
-  let r;
-  try {
-    // 30-second timeout. Apps Script has a 6-min server-side limit, but we
-    // never want the dashboard to hang waiting on a stuck request — better
-    // to fail fast and let the user retry.
-    r = await fetch(CONFIG.PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    });
-  } catch (netErr) {
-    console.error('[proxy] network error on op=' + op + ' after ' + Math.round(performance.now()-t0) + 'ms:', netErr);
-    showRelogBanner('Connection lost — retrying…');
-    setSyncState('error');
-    throw netErr;
-  }
-  if (!r.ok) {
-    console.error('[proxy] HTTP ' + r.status + ' on op=' + op);
-    setSyncState('error');
-    throw new Error('proxy HTTP ' + r.status + ' on op=' + op);
-  }
-  let data;
-  try { data = await r.json(); }
-  catch (parseErr) {
-    console.error('[proxy] non-JSON response on op=' + op + ':', parseErr);
-    setSyncState('error');
-    throw new Error('proxy returned non-JSON on op=' + op);
-  }
-  const elapsed = Math.round(performance.now() - t0);
-  if (elapsed > 2000) console.warn('[proxy] slow call: op=' + op + ' took ' + elapsed + 'ms');
-  if (!data.ok) {
-    console.error('[proxy] app error on op=' + op + ':', data.error);
-    if (data.error === 'unauthorized') {
-      showRelogBanner('Dashboard authorization failed — contact admin.');
-    }
-    throw new Error((data.error || 'proxy error') + ' (op=' + op + ')');
-  }
-  hideRelogBanner();
-  return data.result;
-}
-
-// Relog banner is now only shown for proxy/network errors, not for OAuth.
-// The "Re-login" button just retries — which works once the underlying
-// problem (dropped connection, undeployed proxy, wrong secret) is fixed.
 function showRelogBanner(msg) {
   const b = document.getElementById('relogBanner');
   if (!b) return;
   if (msg) document.getElementById('relogBannerMsg').textContent = msg;
   b.style.display = 'block';
+  // Push the dashboard down so the banner doesn't cover content
   document.body.style.paddingTop = b.offsetHeight + 'px';
   setSyncState('error');
 }
@@ -858,29 +764,138 @@ function hideRelogBanner() {
   document.body.style.paddingTop = '';
 }
 
-// Re-login button: attempt one proxy ping. If it succeeds, dismiss banner
-// and resume sync; otherwise leave the banner up.
-async function doRelog() {
-  try {
-    await proxyCall('ping', {});
+// User clicks "Re-login Now" — request a token with the consent prompt
+function doRelog() {
+  ensureTokenClient();
+  // Use prompt:'' first (silent), fall back is built into GIS automatically
+  // when the silent flow fails it will surface the popup
+  tokenReadyCb = () => {
     hideRelogBanner();
     setSyncState('ok');
-    toast('✓ Reconnected');
+    toast('✓ Re-authenticated');
+    // Resume normal sync
     if (typeof loadData === 'function') loadData();
-  } catch (e) {
-    console.error('Reconnect failed:', e);
-    toast('Still unable to connect — check internet');
+  };
+  try {
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  } catch(e) {
+    console.error('Relog failed:', e);
   }
 }
 
-// Visibility change → reload data if dashboard is fully initialized.
-// Important: don't call loadData if Leaflet hasn't finished loading yet,
-// otherwise updateMap() will throw "L is not defined". Wait for the
-// loadLeaflet callback chain to complete first.
+// Track consecutive silent-refresh failures so we don't surface the relog
+// banner on a single transient error (network blip, race between visibility
+// refresh and the scheduled refresh, etc.). The banner only appears when
+// silent refresh has failed enough times that we genuinely can't recover —
+// or when the current token is already past its lifetime.
+let consecutiveAuthFailures = 0;
+const AUTH_FAILURE_THRESHOLD = 3;
+let refreshInFlight = false;
+
+function ensureTokenClient() {
+  if (tokenClient) return;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CONFIG.CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly',
+    callback: resp => {
+      // Always clear in-flight regardless of outcome
+      refreshInFlight = false;
+      if (resp.error) {
+        consecutiveAuthFailures++;
+        console.warn('OAuth callback error (' + consecutiveAuthFailures + '):', resp.error);
+        // Only show the relog banner if we've genuinely lost the session:
+        // either we never had a token, or the existing one has expired AND
+        // multiple silent refresh attempts have failed.
+        const tokenIsExpired = !tokenAcquiredAt || (Date.now() - tokenAcquiredAt) > TOKEN_LIFETIME_MS;
+        if (tokenIsExpired && consecutiveAuthFailures >= AUTH_FAILURE_THRESHOLD) {
+          showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+          setSyncState('error');
+        }
+        // If the token is still valid, swallow the error silently — the
+        // current gAccessToken is still good, the next API call will work,
+        // and we'll retry the refresh on the next interval tick.
+        if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
+        return;
+      }
+      gAccessToken = resp.access_token;
+      tokenAcquiredAt = Date.now();
+      consecutiveAuthFailures = 0; // reset on success
+      hideRelogBanner();
+      if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
+    },
+  });
+}
+
+function acquireToken(cb) {
+  // Wait for GIS to be available
+  const tryAcquire = () => {
+    if (!window.google || !window.google.accounts) { setTimeout(tryAcquire, 200); return; }
+    ensureTokenClient();
+    if (gAccessToken) { cb(); return; }
+    tokenReadyCb = cb;
+    tokenClient.requestAccessToken({ prompt: '' }); // silent if possible
+  };
+  tryAcquire();
+}
+
+// ── Token refresh strategy ──
+// Google access tokens last ~60 min. We refresh silently every 30 min and
+// ── Token refresh strategy ──
+// Google access tokens last ~60 min. We refresh silently every 50 min, and
+// also on visibility-return / API failure IF the token is genuinely old.
+// Critically, we never call requestAccessToken speculatively — even with
+// prompt:'', Google can decide to show the account chooser when multiple
+// Google accounts are signed into the browser (which is common for staff
+// devices). So we ONLY trigger a refresh when the token is actually old
+// enough to need it, and we deduplicate concurrent refresh requests.
+
+// Threshold: when the token is older than this, a refresh is allowed.
+// Below this, refresh requests are skipped (the existing token is still good).
+const REFRESH_AGE_THRESHOLD_MS = 50 * 60 * 1000; // 50 min
+
+function tokenIsOld() {
+  if (!tokenAcquiredAt) return true;
+  return (Date.now() - tokenAcquiredAt) > REFRESH_AGE_THRESHOLD_MS;
+}
+
+function trySilentRefresh() {
+  if (!curUser) return;
+  if (refreshInFlight) return; // already trying — don't stack requests
+  if (!tokenIsOld()) return;   // current token still good — leave it alone
+  ensureTokenClient();
+  refreshInFlight = true;
+  // Wrap the existing callback so we can clear the in-flight flag on completion
+  const prevCb = tokenReadyCb;
+  tokenReadyCb = () => {
+    refreshInFlight = false;
+    if (prevCb) prevCb();
+  };
+  try {
+    tokenClient.requestAccessToken({ prompt: '' });
+  } catch(e) {
+    refreshInFlight = false;
+  }
+  // Safety net: clear the flag after 30s in case the callback never fires
+  setTimeout(() => { refreshInFlight = false; }, 30000);
+}
+
+function scheduleTokenRefresh() {
+  // Silent refresh every 50 min — only fires if the token is actually old.
+  setInterval(trySilentRefresh, 5 * 60 * 1000); // check every 5 min, refresh if eligible
+}
+scheduleTokenRefresh();
+
+// ── Visibility-change refresh ──
+// Mobile users (techs in the field) regularly switch between apps, lock their
+// phone, etc. When the dashboard becomes visible again, refresh the token
+// IF it's actually old. We don't speculatively refresh — that would cause
+// Google's account chooser to pop up every time the user switches tabs.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (!curUser) return;
-  if (!leafletLoaded) return; // first load is still in progress, let it finish
+  // Always reload data so user sees fresh tickets, but only refresh the token
+  // if it's actually getting old.
+  trySilentRefresh();
   if (typeof loadData === 'function' && !isSaving) loadData();
 });
 
@@ -896,31 +911,21 @@ function doLogin() {
   const user = USERS.find(u => u.name === name && u.pin === pin);
   if (!user) { err.textContent = 'Invalid name or PIN'; document.getElementById('loginPin').value=''; return; }
   btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
-  // Verify the proxy is reachable before declaring the user logged in.
-  proxyCall('ping', {}).then(() => {
+  acquireToken(() => {
     btn.disabled = false; btn.textContent = 'Sign In →';
     const authData = { name: user.name, role: user.role, tech: user.tech || '', saved: Date.now() };
     localStorage.setItem('wrs_user', JSON.stringify(authData));
     startDash({ name: user.name, role: user.role, tech: user.tech || '' });
-  }).catch(e => {
-    btn.disabled = false; btn.textContent = 'Sign In →';
-    err.textContent = 'Cannot reach server — check internet and try again';
-    console.error('Login proxy ping failed:', e);
   });
 }
 
 function doLogout() {
+  if (gAccessToken) { google.accounts.oauth2.revoke(gAccessToken); gAccessToken = null; }
   localStorage.removeItem('wrs_user');
   curUser = null; canWrite = false; isTech = false; viewingAll = false;
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('dashWrap').style.display = 'none';
 }
-
-// Track consecutive silent-refresh failures so we don't surface the relog
-// banner on a single transient error (network blip, race between visibility
-// refresh and the scheduled refresh, etc.). The banner only appears when
-// silent refresh has failed enough times that we genuinely can't recover —
-// or when the current token is already past its lifetime.
 
 // ── Lazy-load Leaflet (CSS + JS) only after login so initial page load is instant ──
 let leafletLoaded = false;
@@ -932,17 +937,7 @@ function loadLeaflet(cb) {
   // Load JS
   const s = document.createElement('script');
   s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-  s.onload = () => {
-    leafletLoaded = true;
-    cb();
-    // If loadData already finished and tried to render the map before
-    // Leaflet was ready, the map was deferred. Now that Leaflet is here,
-    // re-trigger the appropriate render path so the map actually appears.
-    if (jobs && jobs.length) {
-      if (isTech && !viewingAll) renderTechView(true);
-      else updateMap();
-    }
-  };
+  s.onload = () => { leafletLoaded = true; cb(); };
   document.head.appendChild(s);
 }
 
@@ -973,28 +968,10 @@ function startDash(user) {
     document.getElementById('adminView').style.display = 'block';
     document.getElementById('techView').style.display  = 'none';
   }
-  // Try to render the dashboard from localStorage cache instantly. If we
-  // succeed, the user sees the board within ~50ms instead of waiting 2-3s
-  // for the proxy. The fresh data fetch runs in the background and will
-  // re-render when it arrives. If there's no cache, the loading spinner
-  // shows as before.
-  const renderedFromCache = tryRenderFromCache();
-
-  // Load Leaflet lazily (download in parallel with the proxy call), then
-  // fetch data. Heartbeat + duplicate-login check are deferred so they
-  // don't compete with the initial loadData on Apps Script cold start.
-  loadLeaflet(() => {
-    loadData().then(() => {
-      startHeartbeat();
-      // Duplicate-login check is admin-only and not urgent. Defer it 30s
-      // so it doesn't add a second 2-3s proxy call on top of the initial
-      // load. By 30s in, the dashboard is fully rendered and Apps Script
-      // is warm, so the call will be much faster.
-      if (curUser && curUser.role === 'admin') {
-        setTimeout(checkDuplicateLogins, 30 * 1000);
-      }
-    });
-  });
+  // Load Leaflet lazily, then fetch data (map won't block login)
+  loadLeaflet(() => { loadData(); });
+  startHeartbeat();
+  if (curUser.role === 'admin') checkDuplicateLogins();
 }
 
 function showAdminView() {
@@ -1018,37 +995,80 @@ function backToTechView() {
 }
 
 // ════════════════════════════════════════════
-//  SHEETS API HELPERS — all routed through the proxy
+//  SHEETS API HELPERS
 // ════════════════════════════════════════════
-// These keep the same names and return shapes as the original Google
-// Sheets REST helpers, so all of loadData/saveJob/clearShop/etc. work
-// without changes. The proxy itself reshapes Apps Script responses to
-// match the REST API where needed (e.g. opGetFormatting).
-
 async function sheetsGet(range) {
-  return await proxyCall('get', { range: range });
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}`;
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (r.status === 401) {
+    // Token expired — silently refresh then retry once
+    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+  }
+  if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
+  return r.json();
 }
 
 async function sheetsBatchGet(ranges) {
-  return await proxyCall('batchGet', { ranges: ranges });
+  const qs = ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values:batchGet?${qs}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (!r.ok) throw new Error(`Sheets batchGet failed: ${r.status}`);
+  return r.json();
 }
 
 async function sheetsGetFormatting(range) {
-  return await proxyCall('getFormatting', { range: range });
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat(backgroundColor)))))`;
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+  if (r.status === 401) {
+    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
+  }
+  if (!r.ok) {
+    const txt = await r.text().catch(()=>'');
+    throw new Error(`Sheets formatting failed: ${r.status} ${txt.substring(0,100)}`);
+  }
+  return r.json();
 }
 
 async function sheetsSetBackground(row, col, hexColor) {
-  await proxyCall('setBackground', { row: row, col: col, hex: hexColor });
+  // row/col are 1-based
+  const body = {
+    requests: [{
+      repeatCell: {
+        range: { sheetId: 0, startRowIndex: row-1, endRowIndex: row, startColumnIndex: col-1, endColumnIndex: col },
+        cell: { userEnteredFormat: { backgroundColor: hexToRgb(hexColor) } },
+        fields: 'userEnteredFormat.backgroundColor',
+      }
+    }]
+  };
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}:batchUpdate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }
 
 async function sheetsSetValue(row, col, value) {
-  await proxyCall('setValue', { row: row, col: col, value: value });
+  const range = `Sheet1!${colLetter(col)}${row}`;
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [[value]] }),
+  });
+  if (!r.ok) throw new Error(`sheetsSetValue failed: ${r.status}`);
 }
 
 async function sheetsClear(row, col) {
-  // The proxy resets background to white as part of clear (matches the
-  // original behaviour where sheetsClear also called sheetsSetBackground).
-  await proxyCall('clear', { row: row, col: col });
+  const range = `Sheet1!${colLetter(col)}${row}`;
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gAccessToken}` },
+  });
+  if (!r.ok) throw new Error(`sheetsClear failed: ${r.status}`);
+  await sheetsSetBackground(row, col, '#ffffff');
 }
 
 function hexToRgb(hex) {
@@ -1076,203 +1096,126 @@ function setSyncState(state) {
   if (state === 'error')    { dot.style.background='var(--rd)'; txt.textContent='ERROR'; txt.style.color='var(--rd)'; }
 }
 
-// Fallback: rebuild the loadAll payload from the old 3-call path. Used when
-// the deployed Apps Script proxy hasn't been redeployed with the new
-// loadAll op yet. Returns the same shape as opLoadAll on the server.
-async function loadDataLegacy() {
-  const fmtResp  = await sheetsGetFormatting('Sheet1!A6:K23');
-  const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
-  const shopFmt  = await sheetsGetFormatting('Sheet1!A25:K25');
-  const shopData = shopFmt.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
-  const noteResp = await sheetsGet('Sheet1!A26:K26');
-  const noteRow  = noteResp.values?.[0] || [];
-
-  // Convert old-style cell objects into the [bgHex, value] shape opLoadAll uses
-  function toCellPair(cell) {
-    const v   = cell?.userEnteredValue?.stringValue || cell?.userEnteredValue?.formulaValue || '';
-    const bg  = cell?.userEnteredFormat?.backgroundColor || null;
-    const hex = bg ? rgbToHex(bg) : '#ffffff';
-    return [ hex, v ];
-  }
-  function rowToPairs(rowData) {
-    const out = [];
-    const cells = rowData?.values || [];
-    for (let c = 0; c < 11; c++) out.push(toCellPair(cells[c]));
-    return out;
-  }
-  const jobsRows = [];
-  for (let r = 0; r < 13; r++) jobsRows.push(rowToPairs(sheetData[r]));
-  const notesRows = [];
-  for (let r = 13; r < 18; r++) notesRows.push(rowToPairs(sheetData[r]));
-  const shopPairs = [];
-  for (let c = 0; c < 11; c++) shopPairs.push(toCellPair(shopData[c]));
-  return {
-    jobs: jobsRows,
-    notes: notesRows,
-    shop: shopPairs,
-    shopNotes: noteRow,
-  };
-}
-
-// Parse a loadAll payload into the global jobs/vendorNotes/shopVisits state.
-// Reusable from both the cache-hydrate path (instant render from localStorage)
-// and the fresh-fetch path (after the proxy returns).
-function hydrateFromPayload(all) {
-  // ── Read shop tickets from row 25 ──
-  jobs = [];
-  const sheetShopTechs = new Set();
-  all.shop.forEach((cell, ci) => {
-    const hex = (cell[0] || '#ffffff').toLowerCase();
-    const v   = String(cell[1] || '');
-    if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
-      const parsed = parseJob(v);
-      if (!SHOP_LOCATIONS[parsed.name]) return;
-      const shopKnownAddr = SHOP_LOCATIONS[parsed.name].address || '';
-      const addrKey = parsed.addr || shopKnownAddr;
-      const shopCoords = SHOP_LOCATIONS[parsed.name];
-      const tech = TECHS[ci] || 'Unknown';
-      const j = { id: -(ci+1), tech, job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
-        isShop: true,
-        lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
-        lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
-      if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
-      jobs.push(j);
-      sheetShopTechs.add(tech);
-      shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { shop: parsed.name });
-    }
-  });
-  Object.keys(shopVisits).forEach(tech => {
-    if (!sheetShopTechs.has(tech)) delete shopVisits[tech];
-  });
-  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-
-  // ── Read shop notes from row 26 ──
-  all.shopNotes.forEach((v, ci) => {
-    if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
-      const tech = TECHS[ci];
-      if (tech) {
-        const notes = v.replace('SHOPNOTE:', '');
-        shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
-      }
-    }
-  });
-
-  // ── Read job tickets (rows 6-18) ──
-  let id = 1;
-  for (let r = 0; r < 13; r++) {
-    const rowData = all.jobs[r] || [];
-    for (let c = 0; c < 11; c++) {
-      const cell = rowData[c];
-      if (!cell) continue;
-      const hex = (cell[0] || '#ffffff').toLowerCase();
-      const val = String(cell[1] || '');
-      if (!val.trim()) continue;
-      const status = HEX_TO_STATUS[hex] || 'none';
-      let cellVal = val;
-      let jobNote = '';
-      const noteIdx = cellVal.indexOf(' ||NOTE:');
-      if (noteIdx !== -1) {
-        jobNote = cellVal.slice(noteIdx + 8).trim();
-        cellVal = cellVal.slice(0, noteIdx).trim();
-      }
-      const parsed = parseJob(cellVal);
-      const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
-      if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
-        job.lat = geoCache[parsed.addr].lat;
-        job.lng = geoCache[parsed.addr].lng;
-      }
-      jobs.push(job);
-    }
-  }
-
-  // ── Vendor notes (rows 19-23) ──
-  vendorNotes = [];
-  for (let r = 0; r < 5; r++) {
-    const rowData = all.notes[r] || [];
-    for (let c = 0; c < 11; c++) {
-      const cell = rowData[c];
-      if (!cell) continue;
-      const val = String(cell[1] || '');
-      if (val.trim()) vendorNotes.push({ row: r+19, col: c+1, tech: TECHS[c]||'', text: val.trim() });
-    }
-  }
-}
-
-// Render the dashboard from current jobs/vendorNotes state. Used after both
-// cache-hydrate and fresh-fetch paths.
-function renderDashboard() {
-  document.getElementById('loadEl').style.display = 'none';
-  document.getElementById('mainarea').style.display = 'flex';
-  if (isTech && !viewingAll) renderTechView(false);
-  else { render(); initMap(); updateMap(); }
-  renderNotes();
-}
-
-// Try to render instantly from localStorage cache. Returns true if it
-// succeeded — caller can then fetch fresh data in the background. Cache
-// key is inlined as a string here (not const-bound) so the function is
-// safe to call from the init() IIFE before later const declarations run.
-function tryRenderFromCache() {
-  try {
-    const raw = localStorage.getItem('wrs_loadAll_cache_v1');
-    if (!raw) return false;
-    const cached = JSON.parse(raw);
-    if (!cached || !cached.payload || !cached.ts) return false;
-    // Cache valid for 10 minutes — older than that, skip and wait for fresh.
-    if (Date.now() - cached.ts > 10 * 60 * 1000) return false;
-    hydrateFromPayload(cached.payload);
-    renderDashboard();
-    console.log('[loadData] rendered from cache (age ' + Math.round((Date.now()-cached.ts)/1000) + 's)');
-    return true;
-  } catch(e) {
-    console.warn('[loadData] cache hydrate failed:', e);
-    return false;
-  }
-}
-
 async function loadData() {
-  // Dedupe: if a load is already in flight, skip this call. Without this
-  // the visibility-change handler can fire while startDash's initial
-  // loadData is still running, and both compete for Apps Script (which
-  // doubles wall-clock time because both calls pay the cold-start cost).
-  if (loadingData) {
-    console.log('[loadData] skipped (already in flight)');
-    return;
-  }
-  loadingData = true;
   setSyncState('syncing');
   try {
-    // Single round-trip fetch of jobs + vendor notes + shop row + shop notes.
-    // The proxy bundles all four ranges into one Apps Script execution.
-    // If the proxy hasn't been redeployed with loadAll yet, fall back to
-    // three legacy calls so the dashboard still works during a partial
-    // deployment.
-    let all;
-    try {
-      all = await proxyCall('loadAll', {});
-    } catch (e) {
-      if (String(e.message || '').indexOf('unknown op: loadAll') !== -1) {
-        console.warn('[loadData] proxy missing loadAll op — falling back to 3-call path. Redeploy Code.gs to fix.');
-        all = await loadDataLegacy();
-      } else {
-        throw e;
+    // ── Fetch jobs + vendor notes (rows 6-23), NO shop rows ──
+    // Range A6:K23 → sheetData index 0 = row 6
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
+    const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
+
+    // ── Fetch shop rows 25-26 separately (values only, no formatting needed for row 26) ──
+    // Row 25 = shop ticket (green cell), Row 26 = SHOPNOTE text
+    const shopFmt  = await sheetsGetFormatting(`Sheet1!A25:K25`);
+    const shopData = shopFmt.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
+    const noteResp = await sheetsGet(`Sheet1!A26:K26`);
+    const noteRow  = noteResp.values?.[0] || [];
+
+    // ── Read shop tickets from row 25 ──
+    // Sheet is source of truth: rebuild the set of techs with shops from row 25,
+    // and only render shop-as-job cards for valid recognized shops (North/South).
+    // Anything else in row 25 (stray text, drag accidents) does not become a shop badge.
+    jobs = [];
+    const sheetShopTechs = new Set();
+    shopData.forEach((cell, ci) => {
+      const v = cell?.userEnteredValue?.stringValue || '';
+      const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
+      const hex   = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
+      if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
+        const parsed = parseJob(v);
+        // Only treat as a shop if name matches a known shop location.
+        // This prevents stray content in row 25 from corrupting shopVisits.
+        if (!SHOP_LOCATIONS[parsed.name]) return;
+        const shopKnownAddr = SHOP_LOCATIONS[parsed.name].address || '';
+        const addrKey = parsed.addr || shopKnownAddr;
+        const shopCoords = SHOP_LOCATIONS[parsed.name];
+        const tech = TECHS[ci] || 'Unknown';
+        const j = { id: -(ci+1), tech, job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
+          isShop: true,
+          lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
+          lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
+        if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
+        jobs.push(j);
+        sheetShopTechs.add(tech);
+        // Sheet is source of truth — overwrite cached shop name (don't just fill if empty).
+        shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { shop: parsed.name });
+      }
+    });
+    // Drop stale shopVisits entries for any tech whose row 25 cell is empty/non-green.
+    // Without this, a once-set shop badge persists in localStorage forever.
+    Object.keys(shopVisits).forEach(tech => {
+      if (!sheetShopTechs.has(tech)) {
+        delete shopVisits[tech];
+      }
+    });
+    localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+
+    // ── Read shop notes from row 26 ──
+    noteRow.forEach((v, ci) => {
+      if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
+        const tech = TECHS[ci];
+        if (tech) {
+          const notes = v.replace('SHOPNOTE:', '');
+          shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
+        }
+      }
+    });
+
+    // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
+    let id = 1;
+    for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
+      const rowData = sheetData[r]?.values || [];
+      for (let c = 0; c < 11; c++) {
+        const cell = rowData[c];
+        const val = cell?.userEnteredValue?.stringValue || cell?.userEnteredValue?.formulaValue || '';
+        if (!val || !val.trim()) continue;
+        const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
+        const hex = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
+        const status = HEX_TO_STATUS[hex] || 'none';
+        // Per-job note convention: cell value can end with " ||NOTE:<text>".
+        // Split that off before parseJob so the address parser sees only the
+        // job/address portion, then re-attach the note to the job object.
+        let cellVal = val;
+        let jobNote = '';
+        const noteIdx = cellVal.indexOf(' ||NOTE:');
+        if (noteIdx !== -1) {
+          jobNote = cellVal.slice(noteIdx + 8).trim();
+          cellVal = cellVal.slice(0, noteIdx).trim();
+        }
+        const parsed = parseJob(cellVal);
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
+        if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
+          job.lat = geoCache[parsed.addr].lat;
+          job.lng = geoCache[parsed.addr].lng;
+        }
+        jobs.push(job);
       }
     }
 
-    // Persist payload to localStorage so the next page load can render
-    // the dashboard instantly while fresh data is fetched in the background.
-    try {
-      localStorage.setItem('wrs_loadAll_cache_v1', JSON.stringify({ ts: Date.now(), payload: all }));
-    } catch(e) { /* quota exceeded — ignore */ }
+    // ── Vendor notes (rows 19-23, sheetData index 13-17) ──
+    vendorNotes = [];
+    for (let r = 13; r < 18; r++) {
+      const rowData = sheetData[r]?.values || [];
+      for (let c = 0; c < 11; c++) {
+        const cell = rowData[c];
+        const val = cell?.userEnteredValue?.stringValue || '';
+        if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
+      }
+    }
 
-    hydrateFromPayload(all);
     setSyncState('ok');
-    renderDashboard();
+    document.getElementById('loadEl').style.display = 'none';
+    document.getElementById('mainarea').style.display = 'flex';
+
+    if (isTech && !viewingAll) renderTechView(false);
+    else { render(); initMap(); updateMap(); }
+    renderNotes();
 
     // Geocode green jobs in background, then do the full map render with all coords
     geocodeGreenJobs().then(() => {
       if (isTech && !viewingAll) renderTechView(true); else updateMap();
       // Geocode tech home addresses (once) so static home dots can be drawn.
+      // Refresh the map markers when done so newly-resolved coords appear.
       geocodeTechHomes().then(() => { if (!isTech || viewingAll) renderHomeDots(); });
     });
 
@@ -1280,8 +1223,6 @@ async function loadData() {
     setSyncState('error');
     console.error(e);
     toast('Sync failed — ' + e.message);
-  } finally {
-    loadingData = false;
   }
 }
 
@@ -1335,33 +1276,11 @@ async function geocodeGreenJobs() {
   }
   // Geocode regular green jobs that still lack coords
   const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !Object.keys(SHOP_LOCATIONS).includes(j.job));
-  if (!toGeo.length) return false;
   let anyNew = false;
-
-  if (CONFIG.MAPS_API_KEY) {
-    // Google Maps geocoder — runs in parallel with a small concurrency limit
-    // (10 at a time). With 50 tickets this completes in ~1-2 seconds total
-    // instead of ~55 seconds.
-    const CONCURRENCY = 10;
-    let idx = 0;
-    async function worker() {
-      while (idx < toGeo.length) {
-        const j = toGeo[idx++];
-        const c = await geocodeOne(j.address);
-        if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
-      }
-    }
-    const workers = [];
-    for (let i = 0; i < Math.min(CONCURRENCY, toGeo.length); i++) workers.push(worker());
-    await Promise.all(workers);
-  } else {
-    // Nominatim — must stay serial with 1.1s sleeps to honour their rate
-    // limits (1 req/sec). This is the slow path.
-    for (const j of toGeo) {
-      const c = await geocodeOne(j.address);
-      if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
-      await new Promise(r => setTimeout(r, 1100));
-    }
+  for (const j of toGeo) {
+    const c = await geocodeOne(j.address);
+    if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
+    await new Promise(r => setTimeout(r, CONFIG.MAPS_API_KEY ? 50 : 1100));
   }
   return anyNew;
 }
@@ -1933,16 +1852,36 @@ async function loadDriveFolders() {
     sec.style.display = 'none';
     return;
   }
+  if (!gAccessToken) {
+    sec.style.display = 'none';
+    return;
+  }
 
   sec.style.display = '';
   grid.innerHTML = '<div class="drive-empty">Loading folders…</div>';
 
   try {
-    // The proxy runs as the deployer (Jon-Pol) and lists folders on his
-    // behalf — so techs no longer need their own Drive access. Errors
-    // here are almost always "the parent folder ID is wrong" or "the
-    // proxy deployer no longer has access to it".
-    const data = await proxyCall('driveList', { parentId: parentId });
+    // ?q=<parentId> in parents and mimeType is folder; only request the fields we need
+    const q = `'${parentId.replace(/'/g,"\\'")}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&orderBy=name&pageSize=100`;
+    let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    if (r.status === 401) {
+      // Token expired — silent refresh, retry once
+      await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
+      r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
+    }
+    if (r.status === 403) {
+      // Most common cause: scope wasn't granted, or folder isn't shared with this user.
+      grid.innerHTML = `<div class="drive-empty">Drive access denied — make sure the parent folder is shared with your Google account, then sign out and back in to re-grant Drive permission.</div>`;
+      return;
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(()=>'');
+      console.warn('Drive list failed:', r.status, txt);
+      grid.innerHTML = `<div class="drive-empty">Couldn't load Drive folders (HTTP ${r.status}).</div>`;
+      return;
+    }
+    const data = await r.json();
     const folders = data.files || [];
     renderDriveFolders(parentId, folders);
   } catch(e) {
@@ -2279,13 +2218,6 @@ let homesGeocoded = false;
 
 function initMap() {
   if (lmap) return;
-  // Defensive: Leaflet may not be loaded yet if loadData was called before
-  // loadLeaflet finished (e.g. via visibilitychange or auto-login). Bail
-  // silently — the next render cycle after Leaflet loads will pick it up.
-  if (typeof L === 'undefined') {
-    console.warn('[map] Leaflet not loaded yet, deferring initMap');
-    return;
-  }
   lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
   markerLayer = L.layerGroup().addTo(lmap);
@@ -2300,27 +2232,15 @@ function initMap() {
 async function geocodeTechHomes() {
   if (homesGeocoded) return;
   if (!canWrite) return;
-  const todo = TECHS.map(tech => ({ tech, h: TECH_START_LOCATIONS[tech] }))
-                    .filter(x => x.h && x.h.address && !(x.h.lat && x.h.lng));
-  if (!todo.length) { homesGeocoded = true; return; }
-
-  if (CONFIG.MAPS_API_KEY) {
-    // Parallel geocoding — 11 techs finish in ~1 second instead of ~12
-    await Promise.all(todo.map(async ({ h }) => {
-      try {
-        const c = await geocodeOne(h.address);
-        if (c) { h.lat = c.lat; h.lng = c.lng; }
-      } catch(e) {}
-    }));
-  } else {
-    // Nominatim — serial with sleeps
-    for (const { h } of todo) {
-      try {
-        const c = await geocodeOne(h.address);
-        if (c) { h.lat = c.lat; h.lng = c.lng; }
-      } catch(e) {}
-      await new Promise(r=>setTimeout(r,1100));
-    }
+  for (const tech of TECHS) {
+    const h = TECH_START_LOCATIONS[tech];
+    if (!h || !h.address) continue;
+    if (h.lat && h.lng) continue;
+    try {
+      const c = await geocodeOne(h.address);
+      if (c) { h.lat = c.lat; h.lng = c.lng; }
+    } catch(e) {}
+    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1100));
   }
   homesGeocoded = true;
 }
@@ -2361,15 +2281,11 @@ function togMap() {
 }
 
 function updateMap() {
-  // If Leaflet isn't loaded yet, do nothing — caller will be re-invoked
-  // after Leaflet finishes loading via the loadLeaflet callback path.
-  if (typeof L === 'undefined') return;
   const tj=jobs.filter(j=>j.color==='green'&&j.lat&&j.lng);
   const sec=document.getElementById('mapsec');
   if(!tj.length){sec.style.display='none';return;}
   sec.style.display='';
   initMap();
-  if (!lmap) return; // initMap bailed (still no Leaflet) — abort silently
   setTimeout(()=>lmap&&lmap.invalidateSize(),150);
 
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
@@ -2640,7 +2556,7 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
 
 // Write this session's presence to the sheet
 async function writeHeartbeat() {
-  if (!curUser) return;
+  if (!curUser || !gAccessToken) return;
   const ts = Date.now();
   const info = SESSION_INFO || {};
   // Full session record stored as JSON
@@ -2697,13 +2613,10 @@ function formatSession(rec, idx) {
 
 // All active sessions keyed by name (populated by checkDuplicateLogins, used by modal)
 let allActiveSessions = {};
-let checkingDuplicates = false;
 
 // Read all heartbeats and alert admin if any user appears more than once
 async function checkDuplicateLogins() {
   if (!curUser || curUser.role !== 'admin') return;
-  if (checkingDuplicates) return; // dedupe overlapping calls
-  checkingDuplicates = true;
   try {
     const resp = await sheetsGet(`Sheet1!A${HEARTBEAT_ROW}:L${HEARTBEAT_ROW}`);
     const row = resp.values?.[0] || [];
@@ -2741,9 +2654,7 @@ async function checkDuplicateLogins() {
       msg.textContent = dupes.join(', ') + (dupes.length === 1 ? ' is' : ' are') + ' logged in from multiple devices';
       banner.style.display = 'block';
     }
-  } catch(e) {} finally {
-    checkingDuplicates = false;
-  }
+  } catch(e) {}
 }
 
 function openSessionModal() {
