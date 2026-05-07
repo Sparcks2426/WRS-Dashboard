@@ -843,10 +843,14 @@ async function doRelog() {
   }
 }
 
-// Visibility change → just reload data. No token refresh needed anymore.
+// Visibility change → reload data if dashboard is fully initialized.
+// Important: don't call loadData if Leaflet hasn't finished loading yet,
+// otherwise updateMap() will throw "L is not defined". Wait for the
+// loadLeaflet callback chain to complete first.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (!curUser) return;
+  if (!leafletLoaded) return; // first load is still in progress, let it finish
   if (typeof loadData === 'function' && !isSaving) loadData();
 });
 
@@ -1194,11 +1198,33 @@ async function geocodeGreenJobs() {
   }
   // Geocode regular green jobs that still lack coords
   const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !Object.keys(SHOP_LOCATIONS).includes(j.job));
+  if (!toGeo.length) return false;
   let anyNew = false;
-  for (const j of toGeo) {
-    const c = await geocodeOne(j.address);
-    if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
-    await new Promise(r => setTimeout(r, CONFIG.MAPS_API_KEY ? 50 : 1100));
+
+  if (CONFIG.MAPS_API_KEY) {
+    // Google Maps geocoder — runs in parallel with a small concurrency limit
+    // (10 at a time). With 50 tickets this completes in ~1-2 seconds total
+    // instead of ~55 seconds.
+    const CONCURRENCY = 10;
+    let idx = 0;
+    async function worker() {
+      while (idx < toGeo.length) {
+        const j = toGeo[idx++];
+        const c = await geocodeOne(j.address);
+        if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
+      }
+    }
+    const workers = [];
+    for (let i = 0; i < Math.min(CONCURRENCY, toGeo.length); i++) workers.push(worker());
+    await Promise.all(workers);
+  } else {
+    // Nominatim — must stay serial with 1.1s sleeps to honour their rate
+    // limits (1 req/sec). This is the slow path.
+    for (const j of toGeo) {
+      const c = await geocodeOne(j.address);
+      if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
+      await new Promise(r => setTimeout(r, 1100));
+    }
   }
   return anyNew;
 }
@@ -2116,6 +2142,13 @@ let homesGeocoded = false;
 
 function initMap() {
   if (lmap) return;
+  // Defensive: Leaflet may not be loaded yet if loadData was called before
+  // loadLeaflet finished (e.g. via visibilitychange or auto-login). Bail
+  // silently — the next render cycle after Leaflet loads will pick it up.
+  if (typeof L === 'undefined') {
+    console.warn('[map] Leaflet not loaded yet, deferring initMap');
+    return;
+  }
   lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
   markerLayer = L.layerGroup().addTo(lmap);
@@ -2130,15 +2163,27 @@ function initMap() {
 async function geocodeTechHomes() {
   if (homesGeocoded) return;
   if (!canWrite) return;
-  for (const tech of TECHS) {
-    const h = TECH_START_LOCATIONS[tech];
-    if (!h || !h.address) continue;
-    if (h.lat && h.lng) continue;
-    try {
-      const c = await geocodeOne(h.address);
-      if (c) { h.lat = c.lat; h.lng = c.lng; }
-    } catch(e) {}
-    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1100));
+  const todo = TECHS.map(tech => ({ tech, h: TECH_START_LOCATIONS[tech] }))
+                    .filter(x => x.h && x.h.address && !(x.h.lat && x.h.lng));
+  if (!todo.length) { homesGeocoded = true; return; }
+
+  if (CONFIG.MAPS_API_KEY) {
+    // Parallel geocoding — 11 techs finish in ~1 second instead of ~12
+    await Promise.all(todo.map(async ({ h }) => {
+      try {
+        const c = await geocodeOne(h.address);
+        if (c) { h.lat = c.lat; h.lng = c.lng; }
+      } catch(e) {}
+    }));
+  } else {
+    // Nominatim — serial with sleeps
+    for (const { h } of todo) {
+      try {
+        const c = await geocodeOne(h.address);
+        if (c) { h.lat = c.lat; h.lng = c.lng; }
+      } catch(e) {}
+      await new Promise(r=>setTimeout(r,1100));
+    }
   }
   homesGeocoded = true;
 }
@@ -2179,11 +2224,15 @@ function togMap() {
 }
 
 function updateMap() {
+  // If Leaflet isn't loaded yet, do nothing — caller will be re-invoked
+  // after Leaflet finishes loading via the loadLeaflet callback path.
+  if (typeof L === 'undefined') return;
   const tj=jobs.filter(j=>j.color==='green'&&j.lat&&j.lng);
   const sec=document.getElementById('mapsec');
   if(!tj.length){sec.style.display='none';return;}
   sec.style.display='';
   initMap();
+  if (!lmap) return; // initMap bailed (still no Leaflet) — abort silently
   setTimeout(()=>lmap&&lmap.invalidateSize(),150);
 
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
