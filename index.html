@@ -716,6 +716,31 @@ let shopModalTech = null, shopModalSelected = null;
   if (!CONFIG.PROXY_URL || CONFIG.PROXY_URL.startsWith('PASTE_')) {
     document.getElementById('configBanner').style.display = 'block';
   }
+  // Pre-warm Leaflet: kick off the download immediately so it can finish
+  // in parallel with proxy calls. Without this, the JS would only start
+  // downloading when the user clicks Sign In, racing the proxy load.
+  // We only pre-warm if a user is already signed in (saved session) so
+  // we don't waste bandwidth on first-time visitors who might bounce.
+  // Inlined here (not via loadLeaflet) to avoid TDZ on the leafletLoaded
+  // let-binding declared further down.
+  if (localStorage.getItem('wrs_user')) {
+    try {
+      const cssEl = document.getElementById('leafletCSS');
+      if (cssEl && cssEl.getAttribute('data-src')) cssEl.href = cssEl.getAttribute('data-src');
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      s.onload = () => {
+        // Mark as loaded so loadLeaflet's later calls fire their callback
+        // immediately. Also re-render the map if data has already arrived.
+        leafletLoaded = true;
+        if (typeof jobs !== 'undefined' && jobs && jobs.length) {
+          if (isTech && !viewingAll) renderTechView(true);
+          else updateMap();
+        }
+      };
+      document.head.appendChild(s);
+    } catch(e) {}
+  }
   // Populate login name select
   const sel = document.getElementById('loginName');
   USERS.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(u => {
@@ -907,7 +932,17 @@ function loadLeaflet(cb) {
   // Load JS
   const s = document.createElement('script');
   s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-  s.onload = () => { leafletLoaded = true; cb(); };
+  s.onload = () => {
+    leafletLoaded = true;
+    cb();
+    // If loadData already finished and tried to render the map before
+    // Leaflet was ready, the map was deferred. Now that Leaflet is here,
+    // re-trigger the appropriate render path so the map actually appears.
+    if (jobs && jobs.length) {
+      if (isTech && !viewingAll) renderTechView(true);
+      else updateMap();
+    }
+  };
   document.head.appendChild(s);
 }
 
