@@ -489,8 +489,8 @@ const CONFIG = {
   // have to authenticate to Google. They authenticate to the dashboard
   // with their PIN; the dashboard passes PROXY_SECRET to the proxy on
   // every call. See Code.gs for deployment instructions.
-  PROXY_URL:    'https://script.google.com/macros/s/AKfycbwxnsSizsRM1Btr7Xsv8fKhkWaieCsGDOVqVxDF_Rgaeo9I4dNrXvYZCog1bECMm2jm/exec',
-  PROXY_SECRET: '8bd95664-95f3-45a1-9fd3-34b7dbd74f3eef29071b-5833-4303-86f6-0eaa7a57d779',
+  PROXY_URL:    'PASTE_APPS_SCRIPT_WEB_APP_URL_HERE',
+  PROXY_SECRET: 'PASTE_SCRIPT_PROPERTIES_SECRET_HERE',
 
   // Sheet ID is still used by the proxy server-side; kept here for any
   // remaining client-side references (e.g. file deep-links).
@@ -659,6 +659,7 @@ const TECH_START_LOCATIONS = {
 
 let shopVisits = {}; // techName → { shop, notes }
 let isSaving = false; // blocks auto-refresh during sheet writes
+let loadingData = false; // dedupe concurrent loadData calls (visibility race etc)
 
 // ── Session heartbeat ──
 const SESSION_ID = Math.random().toString(36).slice(2,10); // unique per tab/load
@@ -937,10 +938,16 @@ function startDash(user) {
     document.getElementById('adminView').style.display = 'block';
     document.getElementById('techView').style.display  = 'none';
   }
-  // Load Leaflet lazily, then fetch data (map won't block login)
-  loadLeaflet(() => { loadData(); });
-  startHeartbeat();
-  if (curUser.role === 'admin') checkDuplicateLogins();
+  // Load Leaflet lazily, then fetch data (map won't block login).
+  // Important: defer heartbeat + checkDuplicateLogins until AFTER initial
+  // loadData completes. Otherwise we hit Apps Script with three concurrent
+  // calls on cold start, each one paying the spinup cost separately.
+  loadLeaflet(() => {
+    loadData().then(() => {
+      startHeartbeat();
+      if (curUser && curUser.role === 'admin') checkDuplicateLogins();
+    });
+  });
 }
 
 function showAdminView() {
@@ -1023,6 +1030,15 @@ function setSyncState(state) {
 }
 
 async function loadData() {
+  // Dedupe: if a load is already in flight, skip this call. Without this
+  // the visibility-change handler can fire while startDash's initial
+  // loadData is still running, and both compete for Apps Script (which
+  // doubles wall-clock time because both calls pay the cold-start cost).
+  if (loadingData) {
+    console.log('[loadData] skipped (already in flight)');
+    return;
+  }
+  loadingData = true;
   setSyncState('syncing');
   try {
     // Single round-trip fetch of jobs + vendor notes + shop row + shop notes.
@@ -1131,6 +1147,8 @@ async function loadData() {
     setSyncState('error');
     console.error(e);
     toast('Sync failed — ' + e.message);
+  } finally {
+    loadingData = false;
   }
 }
 
@@ -2546,10 +2564,13 @@ function formatSession(rec, idx) {
 
 // All active sessions keyed by name (populated by checkDuplicateLogins, used by modal)
 let allActiveSessions = {};
+let checkingDuplicates = false;
 
 // Read all heartbeats and alert admin if any user appears more than once
 async function checkDuplicateLogins() {
   if (!curUser || curUser.role !== 'admin') return;
+  if (checkingDuplicates) return; // dedupe overlapping calls
+  checkingDuplicates = true;
   try {
     const resp = await sheetsGet(`Sheet1!A${HEARTBEAT_ROW}:L${HEARTBEAT_ROW}`);
     const row = resp.values?.[0] || [];
@@ -2587,7 +2608,9 @@ async function checkDuplicateLogins() {
       msg.textContent = dupes.join(', ') + (dupes.length === 1 ? ' is' : ' are') + ' logged in from multiple devices';
       banner.style.display = 'block';
     }
-  } catch(e) {}
+  } catch(e) {} finally {
+    checkingDuplicates = false;
+  }
 }
 
 function openSessionModal() {
