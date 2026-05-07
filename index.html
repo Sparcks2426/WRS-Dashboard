@@ -1029,6 +1029,44 @@ function setSyncState(state) {
   if (state === 'error')    { dot.style.background='var(--rd)'; txt.textContent='ERROR'; txt.style.color='var(--rd)'; }
 }
 
+// Fallback: rebuild the loadAll payload from the old 3-call path. Used when
+// the deployed Apps Script proxy hasn't been redeployed with the new
+// loadAll op yet. Returns the same shape as opLoadAll on the server.
+async function loadDataLegacy() {
+  const fmtResp  = await sheetsGetFormatting('Sheet1!A6:K23');
+  const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
+  const shopFmt  = await sheetsGetFormatting('Sheet1!A25:K25');
+  const shopData = shopFmt.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
+  const noteResp = await sheetsGet('Sheet1!A26:K26');
+  const noteRow  = noteResp.values?.[0] || [];
+
+  // Convert old-style cell objects into the [bgHex, value] shape opLoadAll uses
+  function toCellPair(cell) {
+    const v   = cell?.userEnteredValue?.stringValue || cell?.userEnteredValue?.formulaValue || '';
+    const bg  = cell?.userEnteredFormat?.backgroundColor || null;
+    const hex = bg ? rgbToHex(bg) : '#ffffff';
+    return [ hex, v ];
+  }
+  function rowToPairs(rowData) {
+    const out = [];
+    const cells = rowData?.values || [];
+    for (let c = 0; c < 11; c++) out.push(toCellPair(cells[c]));
+    return out;
+  }
+  const jobsRows = [];
+  for (let r = 0; r < 13; r++) jobsRows.push(rowToPairs(sheetData[r]));
+  const notesRows = [];
+  for (let r = 13; r < 18; r++) notesRows.push(rowToPairs(sheetData[r]));
+  const shopPairs = [];
+  for (let c = 0; c < 11; c++) shopPairs.push(toCellPair(shopData[c]));
+  return {
+    jobs: jobsRows,
+    notes: notesRows,
+    shop: shopPairs,
+    shopNotes: noteRow,
+  };
+}
+
 async function loadData() {
   // Dedupe: if a load is already in flight, skip this call. Without this
   // the visibility-change handler can fire while startDash's initial
@@ -1043,7 +1081,20 @@ async function loadData() {
   try {
     // Single round-trip fetch of jobs + vendor notes + shop row + shop notes.
     // The proxy bundles all four ranges into one Apps Script execution.
-    const all = await proxyCall('loadAll', {});
+    // If the proxy hasn't been redeployed with loadAll yet, fall back to
+    // three legacy calls so the dashboard still works during a partial
+    // deployment.
+    let all;
+    try {
+      all = await proxyCall('loadAll', {});
+    } catch (e) {
+      if (String(e.message || '').indexOf('unknown op: loadAll') !== -1) {
+        console.warn('[loadData] proxy missing loadAll op — falling back to 3-call path. Redeploy Code.gs to fix.');
+        all = await loadDataLegacy();
+      } else {
+        throw e;
+      }
+    }
     // all.jobs       — 13×11 of [bgHex, value]   (rows 6-18)
     // all.notes      —  5×11 of [bgHex, value]   (rows 19-23)
     // all.shop       —    11 of [bgHex, value]   (row 25)
