@@ -973,14 +973,26 @@ function startDash(user) {
     document.getElementById('adminView').style.display = 'block';
     document.getElementById('techView').style.display  = 'none';
   }
-  // Load Leaflet lazily, then fetch data (map won't block login).
-  // Important: defer heartbeat + checkDuplicateLogins until AFTER initial
-  // loadData completes. Otherwise we hit Apps Script with three concurrent
-  // calls on cold start, each one paying the spinup cost separately.
+  // Try to render the dashboard from localStorage cache instantly. If we
+  // succeed, the user sees the board within ~50ms instead of waiting 2-3s
+  // for the proxy. The fresh data fetch runs in the background and will
+  // re-render when it arrives. If there's no cache, the loading spinner
+  // shows as before.
+  const renderedFromCache = tryRenderFromCache();
+
+  // Load Leaflet lazily (download in parallel with the proxy call), then
+  // fetch data. Heartbeat + duplicate-login check are deferred so they
+  // don't compete with the initial loadData on Apps Script cold start.
   loadLeaflet(() => {
     loadData().then(() => {
       startHeartbeat();
-      if (curUser && curUser.role === 'admin') checkDuplicateLogins();
+      // Duplicate-login check is admin-only and not urgent. Defer it 30s
+      // so it doesn't add a second 2-3s proxy call on top of the initial
+      // load. By 30s in, the dashboard is fully rendered and Apps Script
+      // is warm, so the call will be much faster.
+      if (curUser && curUser.role === 'admin') {
+        setTimeout(checkDuplicateLogins, 30 * 1000);
+      }
     });
   });
 }
@@ -1102,6 +1114,122 @@ async function loadDataLegacy() {
   };
 }
 
+// Parse a loadAll payload into the global jobs/vendorNotes/shopVisits state.
+// Reusable from both the cache-hydrate path (instant render from localStorage)
+// and the fresh-fetch path (after the proxy returns).
+function hydrateFromPayload(all) {
+  // ── Read shop tickets from row 25 ──
+  jobs = [];
+  const sheetShopTechs = new Set();
+  all.shop.forEach((cell, ci) => {
+    const hex = (cell[0] || '#ffffff').toLowerCase();
+    const v   = String(cell[1] || '');
+    if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
+      const parsed = parseJob(v);
+      if (!SHOP_LOCATIONS[parsed.name]) return;
+      const shopKnownAddr = SHOP_LOCATIONS[parsed.name].address || '';
+      const addrKey = parsed.addr || shopKnownAddr;
+      const shopCoords = SHOP_LOCATIONS[parsed.name];
+      const tech = TECHS[ci] || 'Unknown';
+      const j = { id: -(ci+1), tech, job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
+        isShop: true,
+        lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
+        lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
+      if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
+      jobs.push(j);
+      sheetShopTechs.add(tech);
+      shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { shop: parsed.name });
+    }
+  });
+  Object.keys(shopVisits).forEach(tech => {
+    if (!sheetShopTechs.has(tech)) delete shopVisits[tech];
+  });
+  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+
+  // ── Read shop notes from row 26 ──
+  all.shopNotes.forEach((v, ci) => {
+    if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
+      const tech = TECHS[ci];
+      if (tech) {
+        const notes = v.replace('SHOPNOTE:', '');
+        shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
+      }
+    }
+  });
+
+  // ── Read job tickets (rows 6-18) ──
+  let id = 1;
+  for (let r = 0; r < 13; r++) {
+    const rowData = all.jobs[r] || [];
+    for (let c = 0; c < 11; c++) {
+      const cell = rowData[c];
+      if (!cell) continue;
+      const hex = (cell[0] || '#ffffff').toLowerCase();
+      const val = String(cell[1] || '');
+      if (!val.trim()) continue;
+      const status = HEX_TO_STATUS[hex] || 'none';
+      let cellVal = val;
+      let jobNote = '';
+      const noteIdx = cellVal.indexOf(' ||NOTE:');
+      if (noteIdx !== -1) {
+        jobNote = cellVal.slice(noteIdx + 8).trim();
+        cellVal = cellVal.slice(0, noteIdx).trim();
+      }
+      const parsed = parseJob(cellVal);
+      const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
+      if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
+        job.lat = geoCache[parsed.addr].lat;
+        job.lng = geoCache[parsed.addr].lng;
+      }
+      jobs.push(job);
+    }
+  }
+
+  // ── Vendor notes (rows 19-23) ──
+  vendorNotes = [];
+  for (let r = 0; r < 5; r++) {
+    const rowData = all.notes[r] || [];
+    for (let c = 0; c < 11; c++) {
+      const cell = rowData[c];
+      if (!cell) continue;
+      const val = String(cell[1] || '');
+      if (val.trim()) vendorNotes.push({ row: r+19, col: c+1, tech: TECHS[c]||'', text: val.trim() });
+    }
+  }
+}
+
+// Render the dashboard from current jobs/vendorNotes state. Used after both
+// cache-hydrate and fresh-fetch paths.
+function renderDashboard() {
+  document.getElementById('loadEl').style.display = 'none';
+  document.getElementById('mainarea').style.display = 'flex';
+  if (isTech && !viewingAll) renderTechView(false);
+  else { render(); initMap(); updateMap(); }
+  renderNotes();
+}
+
+// Try to render instantly from localStorage cache. Returns true if it
+// succeeded — caller can then fetch fresh data in the background. Cache
+// key is inlined as a string here (not const-bound) so the function is
+// safe to call from the init() IIFE before later const declarations run.
+function tryRenderFromCache() {
+  try {
+    const raw = localStorage.getItem('wrs_loadAll_cache_v1');
+    if (!raw) return false;
+    const cached = JSON.parse(raw);
+    if (!cached || !cached.payload || !cached.ts) return false;
+    // Cache valid for 10 minutes — older than that, skip and wait for fresh.
+    if (Date.now() - cached.ts > 10 * 60 * 1000) return false;
+    hydrateFromPayload(cached.payload);
+    renderDashboard();
+    console.log('[loadData] rendered from cache (age ' + Math.round((Date.now()-cached.ts)/1000) + 's)');
+    return true;
+  } catch(e) {
+    console.warn('[loadData] cache hydrate failed:', e);
+    return false;
+  }
+}
+
 async function loadData() {
   // Dedupe: if a load is already in flight, skip this call. Without this
   // the visibility-change handler can fire while startDash's initial
@@ -1130,97 +1258,16 @@ async function loadData() {
         throw e;
       }
     }
-    // all.jobs       — 13×11 of [bgHex, value]   (rows 6-18)
-    // all.notes      —  5×11 of [bgHex, value]   (rows 19-23)
-    // all.shop       —    11 of [bgHex, value]   (row 25)
-    // all.shopNotes  —    11 raw values          (row 26)
 
-    // ── Read shop tickets from row 25 ──
-    jobs = [];
-    const sheetShopTechs = new Set();
-    all.shop.forEach((cell, ci) => {
-      const hex = (cell[0] || '#ffffff').toLowerCase();
-      const v   = String(cell[1] || '');
-      if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
-        const parsed = parseJob(v);
-        if (!SHOP_LOCATIONS[parsed.name]) return;
-        const shopKnownAddr = SHOP_LOCATIONS[parsed.name].address || '';
-        const addrKey = parsed.addr || shopKnownAddr;
-        const shopCoords = SHOP_LOCATIONS[parsed.name];
-        const tech = TECHS[ci] || 'Unknown';
-        const j = { id: -(ci+1), tech, job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
-          isShop: true,
-          lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
-          lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
-        if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
-        jobs.push(j);
-        sheetShopTechs.add(tech);
-        shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { shop: parsed.name });
-      }
-    });
-    Object.keys(shopVisits).forEach(tech => {
-      if (!sheetShopTechs.has(tech)) delete shopVisits[tech];
-    });
-    localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
+    // Persist payload to localStorage so the next page load can render
+    // the dashboard instantly while fresh data is fetched in the background.
+    try {
+      localStorage.setItem('wrs_loadAll_cache_v1', JSON.stringify({ ts: Date.now(), payload: all }));
+    } catch(e) { /* quota exceeded — ignore */ }
 
-    // ── Read shop notes from row 26 ──
-    all.shopNotes.forEach((v, ci) => {
-      if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
-        const tech = TECHS[ci];
-        if (tech) {
-          const notes = v.replace('SHOPNOTE:', '');
-          shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
-        }
-      }
-    });
-
-    // ── Read job tickets (rows 6-18) ──
-    let id = 1;
-    for (let r = 0; r < 13; r++) {
-      const rowData = all.jobs[r] || [];
-      for (let c = 0; c < 11; c++) {
-        const cell = rowData[c];
-        if (!cell) continue;
-        const hex = (cell[0] || '#ffffff').toLowerCase();
-        const val = String(cell[1] || '');
-        if (!val.trim()) continue;
-        const status = HEX_TO_STATUS[hex] || 'none';
-        let cellVal = val;
-        let jobNote = '';
-        const noteIdx = cellVal.indexOf(' ||NOTE:');
-        if (noteIdx !== -1) {
-          jobNote = cellVal.slice(noteIdx + 8).trim();
-          cellVal = cellVal.slice(0, noteIdx).trim();
-        }
-        const parsed = parseJob(cellVal);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
-        if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
-          job.lat = geoCache[parsed.addr].lat;
-          job.lng = geoCache[parsed.addr].lng;
-        }
-        jobs.push(job);
-      }
-    }
-
-    // ── Vendor notes (rows 19-23) ──
-    vendorNotes = [];
-    for (let r = 0; r < 5; r++) {
-      const rowData = all.notes[r] || [];
-      for (let c = 0; c < 11; c++) {
-        const cell = rowData[c];
-        if (!cell) continue;
-        const val = String(cell[1] || '');
-        if (val.trim()) vendorNotes.push({ row: r+19, col: c+1, tech: TECHS[c]||'', text: val.trim() });
-      }
-    }
-
+    hydrateFromPayload(all);
     setSyncState('ok');
-    document.getElementById('loadEl').style.display = 'none';
-    document.getElementById('mainarea').style.display = 'flex';
-
-    if (isTech && !viewingAll) renderTechView(false);
-    else { render(); initMap(); updateMap(); }
-    renderNotes();
+    renderDashboard();
 
     // Geocode green jobs in background, then do the full map render with all coords
     geocodeGreenJobs().then(() => {
