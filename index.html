@@ -770,19 +770,21 @@ async function proxyCall(op, payload) {
     throw new Error('PROXY_URL not configured');
   }
   const body = Object.assign({ op: op, secret: CONFIG.PROXY_SECRET }, payload || {});
+  const t0 = performance.now();
   // Important: use text/plain to avoid CORS preflight on Apps Script.
-  // Apps Script doesn't honour OPTIONS, so an application/json POST would
-  // fail with a CORS error. text/plain is a "simple request" and goes
-  // straight through.
   let r;
   try {
+    // 30-second timeout. Apps Script has a 6-min server-side limit, but we
+    // never want the dashboard to hang waiting on a stuck request — better
+    // to fail fast and let the user retry.
     r = await fetch(CONFIG.PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000),
     });
   } catch (netErr) {
-    console.error('[proxy] network error on op=' + op + ':', netErr);
+    console.error('[proxy] network error on op=' + op + ' after ' + Math.round(performance.now()-t0) + 'ms:', netErr);
     showRelogBanner('Connection lost — retrying…');
     setSyncState('error');
     throw netErr;
@@ -799,6 +801,8 @@ async function proxyCall(op, payload) {
     setSyncState('error');
     throw new Error('proxy returned non-JSON on op=' + op);
   }
+  const elapsed = Math.round(performance.now() - t0);
+  if (elapsed > 2000) console.warn('[proxy] slow call: op=' + op + ' took ' + elapsed + 'ms');
   if (!data.ok) {
     console.error('[proxy] app error on op=' + op + ':', data.error);
     if (data.error === 'unauthorized') {
@@ -1021,32 +1025,22 @@ function setSyncState(state) {
 async function loadData() {
   setSyncState('syncing');
   try {
-    // ── Fetch jobs + vendor notes (rows 6-23), NO shop rows ──
-    // Range A6:K23 → sheetData index 0 = row 6
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
-    const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
-
-    // ── Fetch shop rows 25-26 separately (values only, no formatting needed for row 26) ──
-    // Row 25 = shop ticket (green cell), Row 26 = SHOPNOTE text
-    const shopFmt  = await sheetsGetFormatting(`Sheet1!A25:K25`);
-    const shopData = shopFmt.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
-    const noteResp = await sheetsGet(`Sheet1!A26:K26`);
-    const noteRow  = noteResp.values?.[0] || [];
+    // Single round-trip fetch of jobs + vendor notes + shop row + shop notes.
+    // The proxy bundles all four ranges into one Apps Script execution.
+    const all = await proxyCall('loadAll', {});
+    // all.jobs       — 13×11 of [bgHex, value]   (rows 6-18)
+    // all.notes      —  5×11 of [bgHex, value]   (rows 19-23)
+    // all.shop       —    11 of [bgHex, value]   (row 25)
+    // all.shopNotes  —    11 raw values          (row 26)
 
     // ── Read shop tickets from row 25 ──
-    // Sheet is source of truth: rebuild the set of techs with shops from row 25,
-    // and only render shop-as-job cards for valid recognized shops (North/South).
-    // Anything else in row 25 (stray text, drag accidents) does not become a shop badge.
     jobs = [];
     const sheetShopTechs = new Set();
-    shopData.forEach((cell, ci) => {
-      const v = cell?.userEnteredValue?.stringValue || '';
-      const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
-      const hex   = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
+    all.shop.forEach((cell, ci) => {
+      const hex = (cell[0] || '#ffffff').toLowerCase();
+      const v   = String(cell[1] || '');
       if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
         const parsed = parseJob(v);
-        // Only treat as a shop if name matches a known shop location.
-        // This prevents stray content in row 25 from corrupting shopVisits.
         if (!SHOP_LOCATIONS[parsed.name]) return;
         const shopKnownAddr = SHOP_LOCATIONS[parsed.name].address || '';
         const addrKey = parsed.addr || shopKnownAddr;
@@ -1059,21 +1053,16 @@ async function loadData() {
         if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
         jobs.push(j);
         sheetShopTechs.add(tech);
-        // Sheet is source of truth — overwrite cached shop name (don't just fill if empty).
         shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { shop: parsed.name });
       }
     });
-    // Drop stale shopVisits entries for any tech whose row 25 cell is empty/non-green.
-    // Without this, a once-set shop badge persists in localStorage forever.
     Object.keys(shopVisits).forEach(tech => {
-      if (!sheetShopTechs.has(tech)) {
-        delete shopVisits[tech];
-      }
+      if (!sheetShopTechs.has(tech)) delete shopVisits[tech];
     });
     localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
 
     // ── Read shop notes from row 26 ──
-    noteRow.forEach((v, ci) => {
+    all.shopNotes.forEach((v, ci) => {
       if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
         const tech = TECHS[ci];
         if (tech) {
@@ -1083,20 +1072,17 @@ async function loadData() {
       }
     });
 
-    // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
+    // ── Read job tickets (rows 6-18) ──
     let id = 1;
-    for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
-      const rowData = sheetData[r]?.values || [];
+    for (let r = 0; r < 13; r++) {
+      const rowData = all.jobs[r] || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
-        const val = cell?.userEnteredValue?.stringValue || cell?.userEnteredValue?.formulaValue || '';
-        if (!val || !val.trim()) continue;
-        const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
-        const hex = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
+        if (!cell) continue;
+        const hex = (cell[0] || '#ffffff').toLowerCase();
+        const val = String(cell[1] || '');
+        if (!val.trim()) continue;
         const status = HEX_TO_STATUS[hex] || 'none';
-        // Per-job note convention: cell value can end with " ||NOTE:<text>".
-        // Split that off before parseJob so the address parser sees only the
-        // job/address portion, then re-attach the note to the job object.
         let cellVal = val;
         let jobNote = '';
         const noteIdx = cellVal.indexOf(' ||NOTE:');
@@ -1114,14 +1100,15 @@ async function loadData() {
       }
     }
 
-    // ── Vendor notes (rows 19-23, sheetData index 13-17) ──
+    // ── Vendor notes (rows 19-23) ──
     vendorNotes = [];
-    for (let r = 13; r < 18; r++) {
-      const rowData = sheetData[r]?.values || [];
+    for (let r = 0; r < 5; r++) {
+      const rowData = all.notes[r] || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
-        const val = cell?.userEnteredValue?.stringValue || '';
-        if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
+        if (!cell) continue;
+        const val = String(cell[1] || '');
+        if (val.trim()) vendorNotes.push({ row: r+19, col: c+1, tech: TECHS[c]||'', text: val.trim() });
       }
     }
 
@@ -1137,7 +1124,6 @@ async function loadData() {
     geocodeGreenJobs().then(() => {
       if (isTech && !viewingAll) renderTechView(true); else updateMap();
       // Geocode tech home addresses (once) so static home dots can be drawn.
-      // Refresh the map markers when done so newly-resolved coords appear.
       geocodeTechHomes().then(() => { if (!isTech || viewingAll) renderHomeDots(); });
     });
 
