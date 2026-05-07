@@ -489,8 +489,8 @@ const CONFIG = {
   // have to authenticate to Google. They authenticate to the dashboard
   // with their PIN; the dashboard passes PROXY_SECRET to the proxy on
   // every call. See Code.gs for deployment instructions.
-  PROXY_URL:    'https://script.google.com/macros/s/AKfycbwxnsSizsRM1Btr7Xsv8fKhkWaieCsGDOVqVxDF_Rgaeo9I4dNrXvYZCog1bECMm2jm/exec',
-  PROXY_SECRET: '8bd95664-95f3-45a1-9fd3-34b7dbd74f3eef29071b-5833-4303-86f6-0eaa7a57d779',
+  PROXY_URL:    'PASTE_APPS_SCRIPT_WEB_APP_URL_HERE',
+  PROXY_SECRET: 'PASTE_SCRIPT_PROPERTIES_SECRET_HERE',
 
   // Sheet ID is still used by the proxy server-side; kept here for any
   // remaining client-side references (e.g. file deep-links).
@@ -780,32 +780,31 @@ async function proxyCall(op, payload) {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(body),
-      // redirect:'follow' is the default; Apps Script web apps redirect once.
     });
   } catch (netErr) {
-    // Pure network error (offline, DNS, etc.)
+    console.error('[proxy] network error on op=' + op + ':', netErr);
     showRelogBanner('Connection lost — retrying…');
     setSyncState('error');
     throw netErr;
   }
   if (!r.ok) {
-    // Apps Script returns 200 even for app-level errors, so a non-OK status
-    // here is an infra issue (e.g. the script was undeployed).
+    console.error('[proxy] HTTP ' + r.status + ' on op=' + op);
     setSyncState('error');
-    throw new Error('proxy HTTP ' + r.status);
+    throw new Error('proxy HTTP ' + r.status + ' on op=' + op);
   }
   let data;
   try { data = await r.json(); }
   catch (parseErr) {
+    console.error('[proxy] non-JSON response on op=' + op + ':', parseErr);
     setSyncState('error');
-    throw new Error('proxy returned non-JSON');
+    throw new Error('proxy returned non-JSON on op=' + op);
   }
   if (!data.ok) {
+    console.error('[proxy] app error on op=' + op + ':', data.error);
     if (data.error === 'unauthorized') {
-      // PIN-authenticated user is fine, but the SECRET is wrong — admin issue.
       showRelogBanner('Dashboard authorization failed — contact admin.');
     }
-    throw new Error(data.error || 'proxy error');
+    throw new Error((data.error || 'proxy error') + ' (op=' + op + ')');
   }
   hideRelogBanner();
   return data.result;
