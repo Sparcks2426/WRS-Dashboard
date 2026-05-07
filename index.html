@@ -274,8 +274,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 </head>
 <body>
 
-<!-- ── CONFIG BANNER (shown when CLIENT_ID not set) ── -->
-<div id="configBanner">⚠ Set your GOOGLE_CLIENT_ID and SHEET_ID in the CONFIG section at the top of this file before deploying.</div>
+<!-- ── CONFIG BANNER (shown when PROXY_URL not set) ── -->
+<div id="configBanner">⚠ Set your PROXY_URL and PROXY_SECRET in the CONFIG section at the top of this file before deploying. See Code.gs for proxy setup.</div>
 
 <!-- ── DUPLICATE LOGIN BANNER + MODAL (admin only) ── -->
 <div id="dupeBanner" style="display:none;position:fixed;top:0;left:0;right:0;background:#b45309;color:#fff;font-family:Inter,sans-serif;font-size:12px;font-weight:700;text-align:center;padding:7px 40px;z-index:99998;letter-spacing:.3px">
@@ -477,13 +477,23 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 </div>
 
 <!-- Leaflet loaded lazily after login -->
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+<!-- Google Identity Services no longer needed — auth goes through the proxy -->
 <script>
 // ════════════════════════════════════════════════════
 //  ★  CONFIG — EDIT THESE TWO VALUES BEFORE DEPLOYING
 // ════════════════════════════════════════════════════
 const CONFIG = {
-  CLIENT_ID:  '498691721108-shisjr4a63ot7sg3v0ss1qt96bbl15q4.apps.googleusercontent.com',
+  // ── PROXY (Apps Script web app) ──
+  // The dashboard talks to this URL instead of Google Sheets directly.
+  // The proxy runs as Jon-Pol so end users (techs, dispatchers) never
+  // have to authenticate to Google. They authenticate to the dashboard
+  // with their PIN; the dashboard passes PROXY_SECRET to the proxy on
+  // every call. See Code.gs for deployment instructions.
+  PROXY_URL:    'https://script.google.com/macros/s/AKfycbwxnsSizsRM1Btr7Xsv8fKhkWaieCsGDOVqVxDF_Rgaeo9I4dNrXvYZCog1bECMm2jm/exec',
+  PROXY_SECRET: '8bd95664-95f3-45a1-9fd3-34b7dbd74f3eef29071b-5833-4303-86f6-0eaa7a57d779',
+
+  // Sheet ID is still used by the proxy server-side; kept here for any
+  // remaining client-side references (e.g. file deep-links).
   SHEET_ID:   '1obxydxHUgxiN4X4Upv66ok6kDyWbnBEkQXVkM_39GOU',
   // Optional: Google Maps API key for faster/more accurate geocoding.
   // Leave blank to use free Nominatim geocoder (slightly slower on first load).
@@ -615,7 +625,6 @@ const LOC = {
 // ════════════════════════════════════════════
 //  STATE
 // ════════════════════════════════════════════
-let gAccessToken = null;   // Google OAuth access token
 let curUser = null;        // { name, role, tech? }
 let canWrite = false;
 let isTech = false;
@@ -703,7 +712,7 @@ let shopModalTech = null, shopModalSelected = null;
 //  STARTUP
 // ════════════════════════════════════════════
 (function init() {
-  if (CONFIG.CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com') {
+  if (!CONFIG.PROXY_URL || CONFIG.PROXY_URL.startsWith('PASTE_')) {
     document.getElementById('configBanner').style.display = 'block';
   }
   // Populate login name select
@@ -726,13 +735,17 @@ let shopModalTech = null, shopModalSelected = null;
   // Load saved shop visits from localStorage (overridden by sheet on first loadData)
   try { shopVisits = JSON.parse(localStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
 
-  // Auto-login: permanent — restore session silently whenever a saved user exists
+  // Auto-login: permanent — restore session silently whenever a saved user exists.
+  // We verify the proxy is reachable in the background; if it fails, the relog
+  // banner will surface from inside loadData() / proxyCall(). The dashboard
+  // shows immediately so the user isn't blocked on a network probe.
   try {
     const saved = localStorage.getItem('wrs_user');
     if (saved) {
       const u = JSON.parse(saved);
       if (u && u.name) {
-        acquireToken(() => startDash(u)); return;
+        startDash(u);
+        return;
       }
     }
   } catch(e) {}
@@ -741,19 +754,71 @@ let shopModalTech = null, shopModalSelected = null;
 document.getElementById('loginPin').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
 // ════════════════════════════════════════════
-//  GOOGLE OAUTH (GIS token client — implicit)
+//  PROXY CLIENT (Apps Script web app)
 // ════════════════════════════════════════════
-let tokenClient = null;
-let tokenReadyCb = null;
-let tokenAcquiredAt = 0;       // ms timestamp of last successful token
-const TOKEN_LIFETIME_MS = 60 * 60 * 1000; // Google access tokens last ~60 min
+// All sheet read/write goes through this single function. The proxy runs
+// as Jon-Pol on Google's servers and is gated by PROXY_SECRET. End users
+// never authenticate to Google — they authenticate to the dashboard with
+// their PIN, and the dashboard sends PROXY_SECRET to the proxy.
+//
+// On failure, callers throw — so existing try/catch blocks in loadData(),
+// the save paths, etc. continue to work without changes.
 
+async function proxyCall(op, payload) {
+  if (!CONFIG.PROXY_URL || CONFIG.PROXY_URL.startsWith('PASTE_')) {
+    showRelogBanner('Dashboard is not configured — proxy URL missing. Contact admin.');
+    throw new Error('PROXY_URL not configured');
+  }
+  const body = Object.assign({ op: op, secret: CONFIG.PROXY_SECRET }, payload || {});
+  // Important: use text/plain to avoid CORS preflight on Apps Script.
+  // Apps Script doesn't honour OPTIONS, so an application/json POST would
+  // fail with a CORS error. text/plain is a "simple request" and goes
+  // straight through.
+  let r;
+  try {
+    r = await fetch(CONFIG.PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify(body),
+      // redirect:'follow' is the default; Apps Script web apps redirect once.
+    });
+  } catch (netErr) {
+    // Pure network error (offline, DNS, etc.)
+    showRelogBanner('Connection lost — retrying…');
+    setSyncState('error');
+    throw netErr;
+  }
+  if (!r.ok) {
+    // Apps Script returns 200 even for app-level errors, so a non-OK status
+    // here is an infra issue (e.g. the script was undeployed).
+    setSyncState('error');
+    throw new Error('proxy HTTP ' + r.status);
+  }
+  let data;
+  try { data = await r.json(); }
+  catch (parseErr) {
+    setSyncState('error');
+    throw new Error('proxy returned non-JSON');
+  }
+  if (!data.ok) {
+    if (data.error === 'unauthorized') {
+      // PIN-authenticated user is fine, but the SECRET is wrong — admin issue.
+      showRelogBanner('Dashboard authorization failed — contact admin.');
+    }
+    throw new Error(data.error || 'proxy error');
+  }
+  hideRelogBanner();
+  return data.result;
+}
+
+// Relog banner is now only shown for proxy/network errors, not for OAuth.
+// The "Re-login" button just retries — which works once the underlying
+// problem (dropped connection, undeployed proxy, wrong secret) is fixed.
 function showRelogBanner(msg) {
   const b = document.getElementById('relogBanner');
   if (!b) return;
   if (msg) document.getElementById('relogBannerMsg').textContent = msg;
   b.style.display = 'block';
-  // Push the dashboard down so the banner doesn't cover content
   document.body.style.paddingTop = b.offsetHeight + 'px';
   setSyncState('error');
 }
@@ -764,138 +829,25 @@ function hideRelogBanner() {
   document.body.style.paddingTop = '';
 }
 
-// User clicks "Re-login Now" — request a token with the consent prompt
-function doRelog() {
-  ensureTokenClient();
-  // Use prompt:'' first (silent), fall back is built into GIS automatically
-  // when the silent flow fails it will surface the popup
-  tokenReadyCb = () => {
+// Re-login button: attempt one proxy ping. If it succeeds, dismiss banner
+// and resume sync; otherwise leave the banner up.
+async function doRelog() {
+  try {
+    await proxyCall('ping', {});
     hideRelogBanner();
     setSyncState('ok');
-    toast('✓ Re-authenticated');
-    // Resume normal sync
+    toast('✓ Reconnected');
     if (typeof loadData === 'function') loadData();
-  };
-  try {
-    tokenClient.requestAccessToken({ prompt: 'consent' });
-  } catch(e) {
-    console.error('Relog failed:', e);
+  } catch (e) {
+    console.error('Reconnect failed:', e);
+    toast('Still unable to connect — check internet');
   }
 }
 
-// Track consecutive silent-refresh failures so we don't surface the relog
-// banner on a single transient error (network blip, race between visibility
-// refresh and the scheduled refresh, etc.). The banner only appears when
-// silent refresh has failed enough times that we genuinely can't recover —
-// or when the current token is already past its lifetime.
-let consecutiveAuthFailures = 0;
-const AUTH_FAILURE_THRESHOLD = 3;
-let refreshInFlight = false;
-
-function ensureTokenClient() {
-  if (tokenClient) return;
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CONFIG.CLIENT_ID,
-    scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly',
-    callback: resp => {
-      // Always clear in-flight regardless of outcome
-      refreshInFlight = false;
-      if (resp.error) {
-        consecutiveAuthFailures++;
-        console.warn('OAuth callback error (' + consecutiveAuthFailures + '):', resp.error);
-        // Only show the relog banner if we've genuinely lost the session:
-        // either we never had a token, or the existing one has expired AND
-        // multiple silent refresh attempts have failed.
-        const tokenIsExpired = !tokenAcquiredAt || (Date.now() - tokenAcquiredAt) > TOKEN_LIFETIME_MS;
-        if (tokenIsExpired && consecutiveAuthFailures >= AUTH_FAILURE_THRESHOLD) {
-          showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
-          setSyncState('error');
-        }
-        // If the token is still valid, swallow the error silently — the
-        // current gAccessToken is still good, the next API call will work,
-        // and we'll retry the refresh on the next interval tick.
-        if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
-        return;
-      }
-      gAccessToken = resp.access_token;
-      tokenAcquiredAt = Date.now();
-      consecutiveAuthFailures = 0; // reset on success
-      hideRelogBanner();
-      if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
-    },
-  });
-}
-
-function acquireToken(cb) {
-  // Wait for GIS to be available
-  const tryAcquire = () => {
-    if (!window.google || !window.google.accounts) { setTimeout(tryAcquire, 200); return; }
-    ensureTokenClient();
-    if (gAccessToken) { cb(); return; }
-    tokenReadyCb = cb;
-    tokenClient.requestAccessToken({ prompt: '' }); // silent if possible
-  };
-  tryAcquire();
-}
-
-// ── Token refresh strategy ──
-// Google access tokens last ~60 min. We refresh silently every 30 min and
-// ── Token refresh strategy ──
-// Google access tokens last ~60 min. We refresh silently every 50 min, and
-// also on visibility-return / API failure IF the token is genuinely old.
-// Critically, we never call requestAccessToken speculatively — even with
-// prompt:'', Google can decide to show the account chooser when multiple
-// Google accounts are signed into the browser (which is common for staff
-// devices). So we ONLY trigger a refresh when the token is actually old
-// enough to need it, and we deduplicate concurrent refresh requests.
-
-// Threshold: when the token is older than this, a refresh is allowed.
-// Below this, refresh requests are skipped (the existing token is still good).
-const REFRESH_AGE_THRESHOLD_MS = 50 * 60 * 1000; // 50 min
-
-function tokenIsOld() {
-  if (!tokenAcquiredAt) return true;
-  return (Date.now() - tokenAcquiredAt) > REFRESH_AGE_THRESHOLD_MS;
-}
-
-function trySilentRefresh() {
-  if (!curUser) return;
-  if (refreshInFlight) return; // already trying — don't stack requests
-  if (!tokenIsOld()) return;   // current token still good — leave it alone
-  ensureTokenClient();
-  refreshInFlight = true;
-  // Wrap the existing callback so we can clear the in-flight flag on completion
-  const prevCb = tokenReadyCb;
-  tokenReadyCb = () => {
-    refreshInFlight = false;
-    if (prevCb) prevCb();
-  };
-  try {
-    tokenClient.requestAccessToken({ prompt: '' });
-  } catch(e) {
-    refreshInFlight = false;
-  }
-  // Safety net: clear the flag after 30s in case the callback never fires
-  setTimeout(() => { refreshInFlight = false; }, 30000);
-}
-
-function scheduleTokenRefresh() {
-  // Silent refresh every 50 min — only fires if the token is actually old.
-  setInterval(trySilentRefresh, 5 * 60 * 1000); // check every 5 min, refresh if eligible
-}
-scheduleTokenRefresh();
-
-// ── Visibility-change refresh ──
-// Mobile users (techs in the field) regularly switch between apps, lock their
-// phone, etc. When the dashboard becomes visible again, refresh the token
-// IF it's actually old. We don't speculatively refresh — that would cause
-// Google's account chooser to pop up every time the user switches tabs.
+// Visibility change → just reload data. No token refresh needed anymore.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (!curUser) return;
-  // Always reload data so user sees fresh tickets, but only refresh the token
-  // if it's actually getting old.
-  trySilentRefresh();
   if (typeof loadData === 'function' && !isSaving) loadData();
 });
 
@@ -911,21 +863,31 @@ function doLogin() {
   const user = USERS.find(u => u.name === name && u.pin === pin);
   if (!user) { err.textContent = 'Invalid name or PIN'; document.getElementById('loginPin').value=''; return; }
   btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
-  acquireToken(() => {
+  // Verify the proxy is reachable before declaring the user logged in.
+  proxyCall('ping', {}).then(() => {
     btn.disabled = false; btn.textContent = 'Sign In →';
     const authData = { name: user.name, role: user.role, tech: user.tech || '', saved: Date.now() };
     localStorage.setItem('wrs_user', JSON.stringify(authData));
     startDash({ name: user.name, role: user.role, tech: user.tech || '' });
+  }).catch(e => {
+    btn.disabled = false; btn.textContent = 'Sign In →';
+    err.textContent = 'Cannot reach server — check internet and try again';
+    console.error('Login proxy ping failed:', e);
   });
 }
 
 function doLogout() {
-  if (gAccessToken) { google.accounts.oauth2.revoke(gAccessToken); gAccessToken = null; }
   localStorage.removeItem('wrs_user');
   curUser = null; canWrite = false; isTech = false; viewingAll = false;
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('dashWrap').style.display = 'none';
 }
+
+// Track consecutive silent-refresh failures so we don't surface the relog
+// banner on a single transient error (network blip, race between visibility
+// refresh and the scheduled refresh, etc.). The banner only appears when
+// silent refresh has failed enough times that we genuinely can't recover —
+// or when the current token is already past its lifetime.
 
 // ── Lazy-load Leaflet (CSS + JS) only after login so initial page load is instant ──
 let leafletLoaded = false;
@@ -995,80 +957,37 @@ function backToTechView() {
 }
 
 // ════════════════════════════════════════════
-//  SHEETS API HELPERS
+//  SHEETS API HELPERS — all routed through the proxy
 // ════════════════════════════════════════════
+// These keep the same names and return shapes as the original Google
+// Sheets REST helpers, so all of loadData/saveJob/clearShop/etc. work
+// without changes. The proxy itself reshapes Apps Script responses to
+// match the REST API where needed (e.g. opGetFormatting).
+
 async function sheetsGet(range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}`;
-  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-  if (r.status === 401) {
-    // Token expired — silently refresh then retry once
-    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
-    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
-  }
-  if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
-  return r.json();
+  return await proxyCall('get', { range: range });
 }
 
 async function sheetsBatchGet(ranges) {
-  const qs = ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&');
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values:batchGet?${qs}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-  if (!r.ok) throw new Error(`Sheets batchGet failed: ${r.status}`);
-  return r.json();
+  return await proxyCall('batchGet', { ranges: ranges });
 }
 
 async function sheetsGetFormatting(range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat(backgroundColor)))))`;
-  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-  if (r.status === 401) {
-    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
-    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
-  }
-  if (!r.ok) {
-    const txt = await r.text().catch(()=>'');
-    throw new Error(`Sheets formatting failed: ${r.status} ${txt.substring(0,100)}`);
-  }
-  return r.json();
+  return await proxyCall('getFormatting', { range: range });
 }
 
 async function sheetsSetBackground(row, col, hexColor) {
-  // row/col are 1-based
-  const body = {
-    requests: [{
-      repeatCell: {
-        range: { sheetId: 0, startRowIndex: row-1, endRowIndex: row, startColumnIndex: col-1, endColumnIndex: col },
-        cell: { userEnteredFormat: { backgroundColor: hexToRgb(hexColor) } },
-        fields: 'userEnteredFormat.backgroundColor',
-      }
-    }]
-  };
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}:batchUpdate`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  await proxyCall('setBackground', { row: row, col: col, hex: hexColor });
 }
 
 async function sheetsSetValue(row, col, value) {
-  const range = `Sheet1!${colLetter(col)}${row}`;
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[value]] }),
-  });
-  if (!r.ok) throw new Error(`sheetsSetValue failed: ${r.status}`);
+  await proxyCall('setValue', { row: row, col: col, value: value });
 }
 
 async function sheetsClear(row, col) {
-  const range = `Sheet1!${colLetter(col)}${row}`;
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${gAccessToken}` },
-  });
-  if (!r.ok) throw new Error(`sheetsClear failed: ${r.status}`);
-  await sheetsSetBackground(row, col, '#ffffff');
+  // The proxy resets background to white as part of clear (matches the
+  // original behaviour where sheetsClear also called sheetsSetBackground).
+  await proxyCall('clear', { row: row, col: col });
 }
 
 function hexToRgb(hex) {
@@ -1852,36 +1771,16 @@ async function loadDriveFolders() {
     sec.style.display = 'none';
     return;
   }
-  if (!gAccessToken) {
-    sec.style.display = 'none';
-    return;
-  }
 
   sec.style.display = '';
   grid.innerHTML = '<div class="drive-empty">Loading folders…</div>';
 
   try {
-    // ?q=<parentId> in parents and mimeType is folder; only request the fields we need
-    const q = `'${parentId.replace(/'/g,"\\'")}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&orderBy=name&pageSize=100`;
-    let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    if (r.status === 401) {
-      // Token expired — silent refresh, retry once
-      await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
-      r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    }
-    if (r.status === 403) {
-      // Most common cause: scope wasn't granted, or folder isn't shared with this user.
-      grid.innerHTML = `<div class="drive-empty">Drive access denied — make sure the parent folder is shared with your Google account, then sign out and back in to re-grant Drive permission.</div>`;
-      return;
-    }
-    if (!r.ok) {
-      const txt = await r.text().catch(()=>'');
-      console.warn('Drive list failed:', r.status, txt);
-      grid.innerHTML = `<div class="drive-empty">Couldn't load Drive folders (HTTP ${r.status}).</div>`;
-      return;
-    }
-    const data = await r.json();
+    // The proxy runs as the deployer (Jon-Pol) and lists folders on his
+    // behalf — so techs no longer need their own Drive access. Errors
+    // here are almost always "the parent folder ID is wrong" or "the
+    // proxy deployer no longer has access to it".
+    const data = await proxyCall('driveList', { parentId: parentId });
     const folders = data.files || [];
     renderDriveFolders(parentId, folders);
   } catch(e) {
@@ -2556,7 +2455,7 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
 
 // Write this session's presence to the sheet
 async function writeHeartbeat() {
-  if (!curUser || !gAccessToken) return;
+  if (!curUser) return;
   const ts = Date.now();
   const info = SESSION_INFO || {};
   // Full session record stored as JSON
