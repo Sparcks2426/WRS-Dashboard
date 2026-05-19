@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
 <title>WRS Operations Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet">
@@ -135,7 +135,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .jinfo{flex:1;min-width:0}
 .jn{font-size:13px;font-weight:700;color:var(--tx);word-break:break-word;line-height:1.3}
 .ja{font-size:11px;color:var(--dm2);margin-top:2px;display:block;word-break:break-word;line-height:1.4}
-.jnotes{font-size:15px;color:#f97316;margin-top:4px;font-style:italic;line-height:1.5;font-weight:500}
+.jnotes{font-size:13px;color:#f97316;margin-top:4px;line-height:1.5;font-weight:700;display:block;word-break:break-word}
 /* ── CLICKABLE NUMBER BADGE (opens per-job note popup) ── */
 .jnumbtn{transition:transform .12s ease,box-shadow .15s ease}
 .jnumbtn:hover{transform:scale(1.15);box-shadow:0 0 0 2px rgba(255,255,255,.4),0 0 12px rgba(59,130,246,.5)}
@@ -321,6 +321,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 <div id="dashWrap">
 <div class="app">
 
+  <!-- On-Call reminder banner (shown to the tech currently on call, Mon-Sun) -->
+  <div id="oncallBanner" style="display:none;background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);color:#fff;padding:12px 18px;border-radius:var(--r12);margin-bottom:14px;font-family:Inter,sans-serif;font-weight:700;text-align:center;box-shadow:0 4px 20px rgba(239,68,68,.3);font-size:14px;line-height:1.5"></div>
+
   <!-- Top Bar -->
   <div class="topbar">
     <div class="topbar-brand">Waste Recycling Services Operations</div>
@@ -330,7 +333,14 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <button class="sync-btn" onclick="loadData()">↻ SYNC</button>
     </div>
     <div class="topbar-spacer"></div>
-    <div class="userbar" id="userbar"></div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
+      <div class="userbar" id="userbar"></div>
+      <div id="topbarButtons" style="display:none;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <button id="calendarBtn" onclick="openCalendar()" style="display:none;background:#8b5cf6;border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:11px;font-weight:700;padding:6px 10px;cursor:pointer;white-space:nowrap">📅 Installation Calendar</button>
+        <button id="oncallBtn" onclick="openOncall()" style="display:none;background:#ef4444;border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:11px;font-weight:700;padding:6px 10px;cursor:pointer;white-space:nowrap">🚨 On Call Rotation</button>
+        <button id="annBtn" onclick="openAnnAdmin()" style="display:none;background:#3b82f6;border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:11px;font-weight:700;padding:6px 10px;cursor:pointer;white-space:nowrap">📢 Announcements</button>
+      </div>
+    </div>
   </div>
 
   <!-- Admin View -->
@@ -394,6 +404,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     <!-- Bright-orange date/time, sits below the map -->
     <div id="tvMapDateTime" style="display:none;margin:12px 0 16px;padding:14px 18px;font-size:18px;font-weight:800;color:#ff6a00;letter-spacing:.5px;background:rgba(255,106,0,.08);border:1px solid rgba(255,106,0,.35);border-radius:var(--r12);text-align:center;text-shadow:0 0 14px rgba(255,106,0,.4)"></div>
     <div class="tv-tickets" id="tvTickets"></div>
+
     <!-- Google Drive folder buttons (between tickets and vendor notes) -->
     <div class="drive-sec" id="tvDriveSec" style="display:none">
       <button class="drive-sec-title" id="tvDriveToggle" type="button" onclick="toggleDriveSection()" aria-expanded="false" aria-controls="tvDriveGrid">
@@ -476,15 +487,181 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   </div>
 </div>
 
+<!-- ── INSTALLATION CALENDAR MODAL ── -->
+<div class="modal-bg" id="calendarBg" onclick="if(event.target===this)closeCalendar()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:30px 12px">
+  <div style="max-width:1000px;width:100%;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r16);padding:24px;box-shadow:0 32px 80px rgba(0,0,0,.7)">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;border-bottom:1px solid var(--bd);padding-bottom:16px">
+      <div style="width:42px;height:42px;border-radius:12px;background:rgba(139,92,246,.18);border:1px solid rgba(139,92,246,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:22px">📅</div>
+      <div style="flex:1">
+        <h3 style="font-size:18px;margin:0;color:var(--tx);font-weight:700">Installation Calendar</h3>
+        <div style="font-size:12px;color:var(--dm2);margin-top:2px">Pre-scheduled installations · Manual promotion to Jeff's column</div>
+      </div>
+      <button onclick="closeCalendar()" style="background:none;border:none;color:var(--dm2);font-size:24px;cursor:pointer;padding:4px 10px;border-radius:var(--r8);transition:background .15s" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='none'">✕</button>
+    </div>
+
+    <!-- Month nav + view toggle -->
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:16px;flex-wrap:wrap">
+      <button onclick="calNavStep(-1)" style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);color:var(--tx);padding:8px 14px;cursor:pointer;font-size:13px;font-weight:700">◀</button>
+      <div id="calMonthLabel" style="font-size:18px;font-weight:700;min-width:240px;text-align:center;color:var(--tx)">—</div>
+      <button onclick="calNavStep(1)" style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);color:var(--tx);padding:8px 14px;cursor:pointer;font-size:13px;font-weight:700">▶</button>
+      <button onclick="calGoToday()" style="background:var(--ac);border:none;border-radius:var(--r8);color:#fff;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700;margin-left:10px">TODAY</button>
+      <div style="display:flex;gap:0;border:1px solid var(--bd);border-radius:var(--r8);overflow:hidden;margin-left:10px">
+        <button id="calBtnWeek" onclick="calSetMode('week')" style="background:var(--ac);border:none;color:#fff;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700">WEEK</button>
+        <button id="calBtnMonth" onclick="calSetMode('month')" style="background:var(--sf2);border:none;color:var(--tx);padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700">MONTH</button>
+      </div>
+    </div>
+
+    <!-- Day headers -->
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px;font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-align:center;padding:0 2px">
+      <div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div>
+    </div>
+
+    <!-- Calendar grid -->
+    <div id="calGrid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;min-height:380px"></div>
+
+    <!-- Footer info -->
+    <div id="calFooter" style="margin-top:14px;font-size:11px;color:var(--dm2);text-align:center;line-height:1.6"></div>
+  </div>
+</div>
+
+<!-- ── ADD/EDIT INSTALL DAY POPUP ── -->
+<div class="modal-bg" id="installDayBg" onclick="if(event.target===this)closeInstallDay()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:9100;align-items:center;justify-content:center;padding:12px">
+  <div style="max-width:480px;width:100%;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r16);padding:22px;box-shadow:0 32px 80px rgba(0,0,0,.7)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <div style="width:36px;height:36px;border-radius:10px;background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0">📅</div>
+      <div style="flex:1">
+        <h3 id="installDayTitle" style="font-size:16px;margin:0">Schedule Installation</h3>
+        <div id="installDaySubtitle" style="font-size:11px;color:var(--dm2);margin-top:2px">—</div>
+      </div>
+    </div>
+
+    <!-- Existing installs for this day -->
+    <div id="installDayList" style="margin-bottom:16px"></div>
+
+    <!-- Add new install form -->
+    <div id="installDayForm">
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Job Name</div>
+      <input id="installNameInput" type="text" placeholder="e.g. Whole Foods 10529 - Compactor Install" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;margin-bottom:10px;box-sizing:border-box">
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Address</div>
+      <input id="installAddrInput" type="text" placeholder="e.g. 21105 St Andrews Blvd, Boca Raton, FL 33486" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;margin-bottom:10px;box-sizing:border-box">
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Notes <span style="font-weight:500;color:var(--dm);text-transform:none;letter-spacing:0">(optional)</span></div>
+      <textarea id="installNotesInput" placeholder="Parts needed, customer contact, special instructions..." style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;resize:vertical;outline:none;min-height:72px;line-height:1.5;box-sizing:border-box"></textarea>
+    </div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button onclick="closeInstallDay()" style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);color:var(--tx);padding:9px 18px;cursor:pointer;font-size:13px;font-weight:600">Close</button>
+      <button id="installAddBtn" onclick="submitInstall()" style="background:#8b5cf6;border:none;border-radius:var(--r8);color:#fff;padding:9px 22px;cursor:pointer;font-size:13px;font-weight:700">Add Install</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ANNOUNCEMENT POPUP (shown once/day to techs) ── -->
+<div id="annPopupBg" onclick="if(event.target===this)dismissAnnouncement()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9200;align-items:center;justify-content:center;padding:16px">
+  <div id="annPopup" style="max-width:520px;width:100%;background:var(--sf);border:2px solid var(--ac);border-radius:var(--r16);padding:24px;box-shadow:0 32px 80px rgba(0,0,0,.7)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div id="annIcon" style="width:36px;height:36px;border-radius:10px;background:rgba(59,130,246,.18);border:1px solid rgba(59,130,246,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:20px">📢</div>
+      <div style="flex:1">
+        <div style="font-size:11px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase">Announcement</div>
+        <div id="annPostedBy" style="font-size:11px;color:var(--dm2);margin-top:2px">—</div>
+      </div>
+    </div>
+    <div id="annText" style="font-size:15px;color:var(--tx);line-height:1.5;margin-bottom:14px;white-space:pre-wrap;word-break:break-word">—</div>
+    <a id="annLink" href="#" target="_blank" rel="noopener" style="display:none;font-size:13px;color:var(--ac);text-decoration:underline;font-weight:700;margin-bottom:14px"></a>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+      <button onclick="dismissAnnouncement()" style="background:var(--ac);border:none;border-radius:var(--r8);color:#fff;padding:9px 22px;cursor:pointer;font-size:13px;font-weight:700">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADMIN: ANNOUNCEMENT COMPOSE / MANAGE MODAL ── -->
+<div id="annAdminBg" onclick="if(event.target===this)closeAnnAdmin()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9300;align-items:flex-start;justify-content:center;padding:30px 12px;overflow-y:auto">
+  <div style="max-width:600px;width:100%;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r16);padding:24px;box-shadow:0 32px 80px rgba(0,0,0,.7)">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;border-bottom:1px solid var(--bd);padding-bottom:14px">
+      <div style="width:38px;height:38px;border-radius:10px;background:rgba(59,130,246,.18);border:1px solid rgba(59,130,246,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px">📢</div>
+      <div style="flex:1">
+        <h3 style="font-size:16px;margin:0;color:var(--tx)">Announcements</h3>
+        <div style="font-size:11px;color:var(--dm2);margin-top:2px">Company-wide bulletin · Auto-expires</div>
+      </div>
+      <button onclick="closeAnnAdmin()" style="background:none;border:none;color:var(--dm2);font-size:22px;cursor:pointer;padding:4px 10px">✕</button>
+    </div>
+
+    <!-- Active announcements list -->
+    <div id="annAdminList" style="margin-bottom:18px"></div>
+
+    <!-- Compose form -->
+    <div style="border-top:1px solid var(--bd);padding-top:16px">
+      <div style="font-size:11px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Post New Announcement</div>
+
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Message</div>
+      <textarea id="annComposeText" placeholder="Reminder: Memorial Day Monday — office closed..." style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;resize:vertical;outline:none;min-height:72px;line-height:1.5;box-sizing:border-box;margin-bottom:10px"></textarea>
+
+      <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px">
+          <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Color</div>
+          <select id="annComposeColor" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:9px 10px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;box-sizing:border-box">
+            <option value="blue">Blue (info)</option>
+            <option value="red">Red (urgent)</option>
+            <option value="green">Green (good news)</option>
+            <option value="amber">Amber (heads up)</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:140px">
+          <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Expires On</div>
+          <input id="annComposeExpiry" type="date" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:9px 10px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;box-sizing:border-box;color-scheme:dark">
+        </div>
+      </div>
+
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Link <span style="font-weight:500;text-transform:none;letter-spacing:0">(optional)</span></div>
+      <input id="annComposeLink" type="url" placeholder="https://..." style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;margin-bottom:14px;box-sizing:border-box">
+
+      <button onclick="postAnnouncement()" style="background:#3b82f6;border:none;border-radius:var(--r8);color:#fff;padding:9px 22px;cursor:pointer;font-size:13px;font-weight:700;width:100%">Post Announcement</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ON-CALL ROTATION MODAL ── -->
+<div id="oncallBg" onclick="if(event.target===this)closeOncall()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:30px 12px">
+  <div style="max-width:900px;width:100%;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r16);padding:24px;box-shadow:0 32px 80px rgba(0,0,0,.7)">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;border-bottom:1px solid var(--bd);padding-bottom:14px">
+      <div style="width:42px;height:42px;border-radius:12px;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:20px">🚨</div>
+      <div style="flex:1">
+        <h3 style="font-size:18px;margin:0;color:var(--tx);font-weight:700">On Call Rotation</h3>
+        <div style="font-size:12px;color:var(--dm2);margin-top:2px">Weekend coverage · Louis → Christian → Geni → Jeff → Mijail → Alex · Repeats every 6 weeks</div>
+      </div>
+      <button onclick="closeOncall()" style="background:none;border:none;color:var(--dm2);font-size:24px;cursor:pointer;padding:4px 10px">✕</button>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:16px;flex-wrap:wrap">
+      <button onclick="oncallNav(-1)" style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);color:var(--tx);padding:8px 14px;cursor:pointer;font-size:13px;font-weight:700">◀</button>
+      <div id="oncallLabel" style="font-size:18px;font-weight:700;min-width:200px;text-align:center;color:var(--tx)">—</div>
+      <button onclick="oncallNav(1)" style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);color:var(--tx);padding:8px 14px;cursor:pointer;font-size:13px;font-weight:700">▶</button>
+      <button onclick="oncallGoToday()" style="background:var(--ac);border:none;border-radius:var(--r8);color:#fff;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700;margin-left:10px">TODAY</button>
+      <div style="display:flex;gap:0;border:1px solid var(--bd);border-radius:var(--r8);overflow:hidden;margin-left:10px">
+        <button id="oncallBtnSix" onclick="oncallSetMode('six')" style="background:var(--ac);border:none;color:#fff;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700">6 WEEKS</button>
+        <button id="oncallBtnYear" onclick="oncallSetMode('year')" style="background:var(--sf2);border:none;color:var(--tx);padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700">YEAR</button>
+      </div>
+    </div>
+
+    <div id="oncallGrid"></div>
+
+    <div style="margin-top:14px;font-size:11px;color:var(--dm2);text-align:center;line-height:1.6">
+      Rotation is automatic and deterministic · 6-week cycle anchored to Mar 21, 2026
+    </div>
+  </div>
+</div>
+
 <!-- Leaflet loaded lazily after login -->
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 // ════════════════════════════════════════════════════
 //  ★  CONFIG — EDIT THESE TWO VALUES BEFORE DEPLOYING
 // ════════════════════════════════════════════════════
 const CONFIG = {
-  CLIENT_ID:  '498691721108-shisjr4a63ot7sg3v0ss1qt96bbl15q4.apps.googleusercontent.com',
-  SHEET_ID:   '1obxydxHUgxiN4X4Upv66ok6kDyWbnBEkQXVkM_39GOU',
+  // ── BACKEND API ──
+  // The Cloudflare Worker that proxies all Sheet/Drive calls.
+  // Sessions are PIN-based and last 30 days — no more Google relogs.
+  API_BASE: 'https://api-test.wrsrepairs.com',
+
   // Optional: Google Maps API key for faster/more accurate geocoding.
   // Leave blank to use free Nominatim geocoder (slightly slower on first load).
   MAPS_API_KEY: 'AIzaSyCYEcl6qYfNBew1-Kw_df3yOCbHKphgi2A',
@@ -615,7 +792,33 @@ const LOC = {
 // ════════════════════════════════════════════
 //  STATE
 // ════════════════════════════════════════════
-let gAccessToken = null;   // Google OAuth access token
+let authToken = null;      // Worker session token (replaces gAccessToken)
+
+// ── apiCall: all backend communication goes through here ──
+async function apiCall(endpoint, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) headers.Authorization = 'Bearer ' + authToken;
+  const res = await fetch(CONFIG.API_BASE + endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body || {}),
+  });
+  if (res.status === 401) {
+    // Session expired — force re-login
+    authToken = null;
+    localStorage.removeItem('wrs_user');
+    localStorage.removeItem('wrs_token');
+    if (typeof showRelogBanner === 'function') {
+      showRelogBanner('Your session has expired — please log in again.');
+    }
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`API ${endpoint} failed: ${res.status} ${txt.substring(0,120)}`);
+  }
+  return res.json();
+}
 let curUser = null;        // { name, role, tech? }
 let canWrite = false;
 let isTech = false;
@@ -703,9 +906,6 @@ let shopModalTech = null, shopModalSelected = null;
 //  STARTUP
 // ════════════════════════════════════════════
 (function init() {
-  if (CONFIG.CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com') {
-    document.getElementById('configBanner').style.display = 'block';
-  }
   // Populate login name select
   const sel = document.getElementById('loginName');
   USERS.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(u => {
@@ -723,16 +923,27 @@ let shopModalTech = null, shopModalSelected = null;
   updateAdminMapTag();
   setInterval(updateAdminMapTag, 1000);
 
-  // Load saved shop visits from localStorage (overridden by sheet on first loadData)
-  try { shopVisits = JSON.parse(localStorage.getItem('wrs_shops')||'{}'); } catch(e) { shopVisits={}; }
-
-  // Auto-login: permanent — restore session silently whenever a saved user exists
+  // Auto-login: validate saved token with Worker; restore session if still valid
   try {
-    const saved = localStorage.getItem('wrs_user');
-    if (saved) {
-      const u = JSON.parse(saved);
+    const savedUser  = localStorage.getItem('wrs_user');
+    const savedToken = localStorage.getItem('wrs_token');
+    if (savedUser && savedToken) {
+      const u = JSON.parse(savedUser);
       if (u && u.name) {
-        acquireToken(() => startDash(u)); return;
+        authToken = savedToken;
+        apiCall('/validate', {}).then(res => {
+          if (res.valid) startDash(u);
+          else {
+            authToken = null;
+            localStorage.removeItem('wrs_user');
+            localStorage.removeItem('wrs_token');
+          }
+        }).catch(() => {
+          authToken = null;
+          localStorage.removeItem('wrs_user');
+          localStorage.removeItem('wrs_token');
+        });
+        return;
       }
     }
   } catch(e) {}
@@ -741,19 +952,17 @@ let shopModalTech = null, shopModalSelected = null;
 document.getElementById('loginPin').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
 // ════════════════════════════════════════════
-//  GOOGLE OAUTH (GIS token client — implicit)
+//  SESSION MANAGEMENT (Worker-based — no Google OAuth)
 // ════════════════════════════════════════════
-let tokenClient = null;
-let tokenReadyCb = null;
-let tokenAcquiredAt = 0;       // ms timestamp of last successful token
-const TOKEN_LIFETIME_MS = 60 * 60 * 1000; // Google access tokens last ~60 min
+// Sessions are PIN-based via the Worker and last 30 days. No Google
+// account is involved on the client side, so the 60-min relog problem
+// from the old GIS implementation simply doesn't exist anymore.
 
 function showRelogBanner(msg) {
   const b = document.getElementById('relogBanner');
   if (!b) return;
   if (msg) document.getElementById('relogBannerMsg').textContent = msg;
   b.style.display = 'block';
-  // Push the dashboard down so the banner doesn't cover content
   document.body.style.paddingTop = b.offsetHeight + 'px';
   setSyncState('error');
 }
@@ -764,138 +973,24 @@ function hideRelogBanner() {
   document.body.style.paddingTop = '';
 }
 
-// User clicks "Re-login Now" — request a token with the consent prompt
+// User clicks "Re-login Now" — show the login screen
 function doRelog() {
-  ensureTokenClient();
-  // Use prompt:'' first (silent), fall back is built into GIS automatically
-  // when the silent flow fails it will surface the popup
-  tokenReadyCb = () => {
-    hideRelogBanner();
-    setSyncState('ok');
-    toast('✓ Re-authenticated');
-    // Resume normal sync
-    if (typeof loadData === 'function') loadData();
-  };
-  try {
-    tokenClient.requestAccessToken({ prompt: 'consent' });
-  } catch(e) {
-    console.error('Relog failed:', e);
-  }
+  authToken = null;
+  localStorage.removeItem('wrs_user');
+  localStorage.removeItem('wrs_token');
+  curUser = null;
+  canWrite = false;
+  isTech = false;
+  hideRelogBanner();
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('dashWrap').style.display = 'none';
 }
 
-// Track consecutive silent-refresh failures so we don't surface the relog
-// banner on a single transient error (network blip, race between visibility
-// refresh and the scheduled refresh, etc.). The banner only appears when
-// silent refresh has failed enough times that we genuinely can't recover —
-// or when the current token is already past its lifetime.
-let consecutiveAuthFailures = 0;
-const AUTH_FAILURE_THRESHOLD = 3;
-let refreshInFlight = false;
-
-function ensureTokenClient() {
-  if (tokenClient) return;
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CONFIG.CLIENT_ID,
-    scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly',
-    callback: resp => {
-      // Always clear in-flight regardless of outcome
-      refreshInFlight = false;
-      if (resp.error) {
-        consecutiveAuthFailures++;
-        console.warn('OAuth callback error (' + consecutiveAuthFailures + '):', resp.error);
-        // Only show the relog banner if we've genuinely lost the session:
-        // either we never had a token, or the existing one has expired AND
-        // multiple silent refresh attempts have failed.
-        const tokenIsExpired = !tokenAcquiredAt || (Date.now() - tokenAcquiredAt) > TOKEN_LIFETIME_MS;
-        if (tokenIsExpired && consecutiveAuthFailures >= AUTH_FAILURE_THRESHOLD) {
-          showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
-          setSyncState('error');
-        }
-        // If the token is still valid, swallow the error silently — the
-        // current gAccessToken is still good, the next API call will work,
-        // and we'll retry the refresh on the next interval tick.
-        if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
-        return;
-      }
-      gAccessToken = resp.access_token;
-      tokenAcquiredAt = Date.now();
-      consecutiveAuthFailures = 0; // reset on success
-      hideRelogBanner();
-      if (tokenReadyCb) { const cb = tokenReadyCb; tokenReadyCb = null; cb(); }
-    },
-  });
-}
-
-function acquireToken(cb) {
-  // Wait for GIS to be available
-  const tryAcquire = () => {
-    if (!window.google || !window.google.accounts) { setTimeout(tryAcquire, 200); return; }
-    ensureTokenClient();
-    if (gAccessToken) { cb(); return; }
-    tokenReadyCb = cb;
-    tokenClient.requestAccessToken({ prompt: '' }); // silent if possible
-  };
-  tryAcquire();
-}
-
-// ── Token refresh strategy ──
-// Google access tokens last ~60 min. We refresh silently every 30 min and
-// ── Token refresh strategy ──
-// Google access tokens last ~60 min. We refresh silently every 50 min, and
-// also on visibility-return / API failure IF the token is genuinely old.
-// Critically, we never call requestAccessToken speculatively — even with
-// prompt:'', Google can decide to show the account chooser when multiple
-// Google accounts are signed into the browser (which is common for staff
-// devices). So we ONLY trigger a refresh when the token is actually old
-// enough to need it, and we deduplicate concurrent refresh requests.
-
-// Threshold: when the token is older than this, a refresh is allowed.
-// Below this, refresh requests are skipped (the existing token is still good).
-const REFRESH_AGE_THRESHOLD_MS = 50 * 60 * 1000; // 50 min
-
-function tokenIsOld() {
-  if (!tokenAcquiredAt) return true;
-  return (Date.now() - tokenAcquiredAt) > REFRESH_AGE_THRESHOLD_MS;
-}
-
-function trySilentRefresh() {
-  if (!curUser) return;
-  if (refreshInFlight) return; // already trying — don't stack requests
-  if (!tokenIsOld()) return;   // current token still good — leave it alone
-  ensureTokenClient();
-  refreshInFlight = true;
-  // Wrap the existing callback so we can clear the in-flight flag on completion
-  const prevCb = tokenReadyCb;
-  tokenReadyCb = () => {
-    refreshInFlight = false;
-    if (prevCb) prevCb();
-  };
-  try {
-    tokenClient.requestAccessToken({ prompt: '' });
-  } catch(e) {
-    refreshInFlight = false;
-  }
-  // Safety net: clear the flag after 30s in case the callback never fires
-  setTimeout(() => { refreshInFlight = false; }, 30000);
-}
-
-function scheduleTokenRefresh() {
-  // Silent refresh every 50 min — only fires if the token is actually old.
-  setInterval(trySilentRefresh, 5 * 60 * 1000); // check every 5 min, refresh if eligible
-}
-scheduleTokenRefresh();
-
-// ── Visibility-change refresh ──
-// Mobile users (techs in the field) regularly switch between apps, lock their
-// phone, etc. When the dashboard becomes visible again, refresh the token
-// IF it's actually old. We don't speculatively refresh — that would cause
-// Google's account chooser to pop up every time the user switches tabs.
+// Visibility-change: reload data when the tab becomes visible again.
+// No token refresh needed — sessions last 30 days, the Worker handles it.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (!curUser) return;
-  // Always reload data so user sees fresh tickets, but only refresh the token
-  // if it's actually getting old.
-  trySilentRefresh();
   if (typeof loadData === 'function' && !isSaving) loadData();
 });
 
@@ -908,20 +1003,46 @@ function doLogin() {
   const err  = document.getElementById('loginErr');
   const btn  = document.getElementById('loginBtn');
   if (!name || !pin) { err.textContent = 'Select name and enter PIN'; return; }
-  const user = USERS.find(u => u.name === name && u.pin === pin);
-  if (!user) { err.textContent = 'Invalid name or PIN'; document.getElementById('loginPin').value=''; return; }
+  // We still keep USERS client-side so we can map name → tech for the UI,
+  // but the Worker is the source of truth for PIN validation.
+  const localUser = USERS.find(u => u.name === name);
   btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
-  acquireToken(() => {
+
+  // Hit the Worker; it'll return a session token on success
+  fetch(CONFIG.API_BASE + '/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, pin }),
+  })
+  .then(r => r.json())
+  .then(res => {
     btn.disabled = false; btn.textContent = 'Sign In →';
-    const authData = { name: user.name, role: user.role, tech: user.tech || '', saved: Date.now() };
-    localStorage.setItem('wrs_user', JSON.stringify(authData));
-    startDash({ name: user.name, role: user.role, tech: user.tech || '' });
+    if (!res.success) {
+      err.textContent = res.error || 'Invalid name or PIN';
+      document.getElementById('loginPin').value = '';
+      return;
+    }
+    authToken = res.token;
+    const tech = localUser ? (localUser.tech || '') : '';
+    const authData = { name: res.name, role: res.role, tech, saved: Date.now() };
+    localStorage.setItem('wrs_user',  JSON.stringify(authData));
+    localStorage.setItem('wrs_token', authToken);
+    startDash({ name: res.name, role: res.role, tech });
+  })
+  .catch(e => {
+    btn.disabled = false; btn.textContent = 'Sign In →';
+    err.textContent = 'Connection error — please try again';
+    console.error('Login failed:', e);
   });
 }
 
 function doLogout() {
-  if (gAccessToken) { google.accounts.oauth2.revoke(gAccessToken); gAccessToken = null; }
+  if (authToken) {
+    apiCall('/logout', {}).catch(() => {}); // fire and forget
+  }
+  authToken = null;
   localStorage.removeItem('wrs_user');
+  localStorage.removeItem('wrs_token');
   curUser = null; canWrite = false; isTech = false; viewingAll = false;
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('dashWrap').style.display = 'none';
@@ -948,6 +1069,23 @@ function startDash(user) {
   viewingAll = false;
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('dashWrap').style.display = 'block';
+
+  // ── Mobile UX on login: scroll to top + reset zoom ──
+  // Briefly force the viewport to scale=1.0 so any prior pinch-zoom is reset,
+  // then restore so the user can still pinch-zoom afterward if they want.
+  try {
+    const vp = document.querySelector('meta[name="viewport"]');
+    if (vp) {
+      const orig = vp.getAttribute('content');
+      vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+      setTimeout(() => { vp.setAttribute('content', orig); }, 350);
+    }
+    // Scroll the page to top so techs land at the top of their view
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  } catch (e) {}
+
   if (!canWrite) document.getElementById('dashWrap').classList.add('readonly');
   else           document.getElementById('dashWrap').classList.remove('readonly');
 
@@ -968,6 +1106,31 @@ function startDash(user) {
     document.getElementById('adminView').style.display = 'block';
     document.getElementById('techView').style.display  = 'none';
   }
+
+  // Calendar button visibility: admins/write always see it, plus Jeff and Landi
+  // (so they can view their installation schedule). Other techs don't see it.
+  const calBtn = document.getElementById('calendarBtn');
+  const showCalBtn = canWrite || (isTech && (user.tech === 'Jeff' || user.tech === 'Landi'));
+  if (calBtn) calBtn.style.display = showCalBtn ? 'inline-block' : 'none';
+  // On-Call Rotation button: admins/write + the 6 rotation techs
+  const oncallBtn = document.getElementById('oncallBtn');
+  const showOncallBtn = canWrite || (isTech && ONCALL_TECHS.includes(user.tech));
+  if (oncallBtn) oncallBtn.style.display = showOncallBtn ? 'inline-block' : 'none';
+  // Announcements admin button: admins/write only
+  const annBtn = document.getElementById('annBtn');
+  if (annBtn) annBtn.style.display = canWrite ? 'inline-block' : 'none';
+  // Show the topbar buttons row if ANY button is visible
+  const topbarBtns = document.getElementById('topbarButtons');
+  if (topbarBtns) {
+    const anyVisible = showCalBtn || showOncallBtn || canWrite;
+    topbarBtns.style.display = anyVisible ? 'flex' : 'none';
+  }
+
+  // Check for announcements (popup once per day for all users)
+  checkAnnouncements();
+  // Check on-call reminder banner
+  updateOncallBanner();
+
   // Load Leaflet lazily, then fetch data (map won't block login)
   loadLeaflet(() => { loadData(); });
   startHeartbeat();
@@ -995,80 +1158,35 @@ function backToTechView() {
 }
 
 // ════════════════════════════════════════════
-//  SHEETS API HELPERS
+//  SHEETS API HELPERS (via Worker)
 // ════════════════════════════════════════════
+// These keep the same input/output shape as the old direct-Sheets-API
+// versions, so all the existing callers (loadData, swapRows, etc.) work
+// unchanged. The Worker validates row bounds — writes outside the
+// dashboard area (rows 1-50) will be rejected.
+
 async function sheetsGet(range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}`;
-  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-  if (r.status === 401) {
-    // Token expired — silently refresh then retry once
-    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
-    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
-  }
-  if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
-  return r.json();
+  return await apiCall('/sheetsGet', { range });
 }
 
 async function sheetsBatchGet(ranges) {
-  const qs = ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&');
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values:batchGet?${qs}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-  if (!r.ok) throw new Error(`Sheets batchGet failed: ${r.status}`);
-  return r.json();
+  return await apiCall('/sheetsBatchGet', { ranges });
 }
 
 async function sheetsGetFormatting(range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}?ranges=${encodeURIComponent(range)}&fields=sheets(data(rowData(values(userEnteredValue,userEnteredFormat(backgroundColor)))))`;
-  let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-  if (r.status === 401) {
-    await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
-    r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    if (r.status === 401) showRelogBanner('Your Google session has expired — please re-login to continue syncing.');
-  }
-  if (!r.ok) {
-    const txt = await r.text().catch(()=>'');
-    throw new Error(`Sheets formatting failed: ${r.status} ${txt.substring(0,100)}`);
-  }
-  return r.json();
+  return await apiCall('/sheetsGetFormatting', { range });
 }
 
 async function sheetsSetBackground(row, col, hexColor) {
-  // row/col are 1-based
-  const body = {
-    requests: [{
-      repeatCell: {
-        range: { sheetId: 0, startRowIndex: row-1, endRowIndex: row, startColumnIndex: col-1, endColumnIndex: col },
-        cell: { userEnteredFormat: { backgroundColor: hexToRgb(hexColor) } },
-        fields: 'userEnteredFormat.backgroundColor',
-      }
-    }]
-  };
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}:batchUpdate`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  await apiCall('/sheetsSetBackground', { row, col, hex: hexColor });
 }
 
 async function sheetsSetValue(row, col, value) {
-  const range = `Sheet1!${colLetter(col)}${row}`;
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${gAccessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[value]] }),
-  });
-  if (!r.ok) throw new Error(`sheetsSetValue failed: ${r.status}`);
+  await apiCall('/sheetsSetValue', { row, col, value });
 }
 
 async function sheetsClear(row, col) {
-  const range = `Sheet1!${colLetter(col)}${row}`;
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:clear`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${gAccessToken}` },
-  });
-  if (!r.ok) throw new Error(`sheetsClear failed: ${r.status}`);
-  await sheetsSetBackground(row, col, '#ffffff');
+  await apiCall('/sheetsClear', { row, col });
 }
 
 function hexToRgb(hex) {
@@ -1099,67 +1217,12 @@ function setSyncState(state) {
 async function loadData() {
   setSyncState('syncing');
   try {
-    // ── Fetch jobs + vendor notes (rows 6-23), NO shop rows ──
+    // ── Fetch jobs + vendor notes (rows 6-23) ──
     // Range A6:K23 → sheetData index 0 = row 6
     const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
-    // ── Fetch shop rows 25-26 separately (values only, no formatting needed for row 26) ──
-    // Row 25 = shop ticket (green cell), Row 26 = SHOPNOTE text
-    const shopFmt  = await sheetsGetFormatting(`Sheet1!A25:K25`);
-    const shopData = shopFmt.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || [];
-    const noteResp = await sheetsGet(`Sheet1!A26:K26`);
-    const noteRow  = noteResp.values?.[0] || [];
-
-    // ── Read shop tickets from row 25 ──
-    // Sheet is source of truth: rebuild the set of techs with shops from row 25,
-    // and only render shop-as-job cards for valid recognized shops (North/South).
-    // Anything else in row 25 (stray text, drag accidents) does not become a shop badge.
     jobs = [];
-    const sheetShopTechs = new Set();
-    shopData.forEach((cell, ci) => {
-      const v = cell?.userEnteredValue?.stringValue || '';
-      const bgRaw = cell?.userEnteredFormat?.backgroundColor || null;
-      const hex   = bgRaw ? rgbToHex(bgRaw) : '#ffffff';
-      if (v && v.trim() && (HEX_TO_STATUS[hex]||'none') === 'green') {
-        const parsed = parseJob(v);
-        // Only treat as a shop if name matches a known shop location.
-        // This prevents stray content in row 25 from corrupting shopVisits.
-        if (!SHOP_LOCATIONS[parsed.name]) return;
-        const shopKnownAddr = SHOP_LOCATIONS[parsed.name].address || '';
-        const addrKey = parsed.addr || shopKnownAddr;
-        const shopCoords = SHOP_LOCATIONS[parsed.name];
-        const tech = TECHS[ci] || 'Unknown';
-        const j = { id: -(ci+1), tech, job: parsed.name, address: addrKey, color: 'green', row: 25, col: ci+1,
-          isShop: true,
-          lat: shopCoords?.lat || (addrKey && geoCache[addrKey]?.lat) || null,
-          lng: shopCoords?.lng || (addrKey && geoCache[addrKey]?.lng) || null };
-        if (shopCoords?.lat) { geoCache[addrKey] = { lat: shopCoords.lat, lng: shopCoords.lng }; }
-        jobs.push(j);
-        sheetShopTechs.add(tech);
-        // Sheet is source of truth — overwrite cached shop name (don't just fill if empty).
-        shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { shop: parsed.name });
-      }
-    });
-    // Drop stale shopVisits entries for any tech whose row 25 cell is empty/non-green.
-    // Without this, a once-set shop badge persists in localStorage forever.
-    Object.keys(shopVisits).forEach(tech => {
-      if (!sheetShopTechs.has(tech)) {
-        delete shopVisits[tech];
-      }
-    });
-    localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-
-    // ── Read shop notes from row 26 ──
-    noteRow.forEach((v, ci) => {
-      if (typeof v === 'string' && v.startsWith('SHOPNOTE:')) {
-        const tech = TECHS[ci];
-        if (tech) {
-          const notes = v.replace('SHOPNOTE:', '');
-          shopVisits[tech] = Object.assign(shopVisits[tech]||{}, { notes });
-        }
-      }
-    });
 
     // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
     let id = 1;
@@ -1182,6 +1245,8 @@ async function loadData() {
           jobNote = cellVal.slice(noteIdx + 8).trim();
           cellVal = cellVal.slice(0, noteIdx).trim();
         }
+        // Strip legacy SHOPNOTE: prefix that survived migration from row 26
+        if (jobNote.startsWith('SHOPNOTE:')) jobNote = jobNote.slice('SHOPNOTE:'.length).trim();
         const parsed = parseJob(cellVal);
         const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
@@ -1227,12 +1292,20 @@ async function loadData() {
 }
 
 function parseJob(raw) {
-  const val = String(raw).trim();
-  const parts = val.split(',');
-  let name = val, addr = '';
-  if (parts.length >= 3) { name = parts[0].trim(); addr = parts.slice(1).join(',').trim(); }
-  if (!addr) addr = LOC[name] || LOC[val] || '';
-  return { name, addr };
+  // Canonical format: "Site Name, Street, City, State ZIP"
+  // Site names never contain commas, so the FIRST comma is the boundary.
+  // This matches the Worker's parseJobCell exactly.
+  const val = String(raw || '').trim();
+  if (!val) return { name: '', addr: '' };
+  const firstComma = val.indexOf(',');
+  if (firstComma === -1) {
+    // No comma — fall back to legacy name-only lookup
+    return { name: val, addr: LOC[val] || '' };
+  }
+  return {
+    name: val.slice(0, firstComma).trim(),
+    addr: val.slice(firstComma + 1).trim(),
+  };
 }
 
 // ════════════════════════════════════════════
@@ -1315,37 +1388,10 @@ function rBoard() {
   let h = '';
   const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : TECHS;
   visibleTechs.forEach(tech => {
-    // Exclude row-25 shop entries from the regular ticket list — they're
-    // rendered as a standalone shop card from shopVisits[tech] further down.
-    // Without this filter, the shop entry from row 25 leaks into tj and gets
-    // re-rendered as a regular green job card (and worse, gets swept up by
-    // autoSortTech which rewrites it into rows 6–18 with a hyphen format).
-    const tj = fj.filter(j => j.tech===tech && !j.isShop);
+    const tj = fj.filter(j => j.tech===tech);
     if (search && !tj.length) return;
     const tc = TC[tech]||'#888';
-    const sv = shopVisits[tech];
 
-    // ── If a shop visit exists, look for a matching draggable job ticket
-    // (same shop name or same shop address) and attach the notes to that
-    // card instead of rendering a separate standalone shop card. This
-    // prevents the "double ticket" issue Jon-Pol reported.
-    let mergedShopOntoJob = false;
-    if (sv && sv.shop) {
-      const shopAddr = (SHOP_LOCATIONS[sv.shop]?.address || '').trim().toLowerCase();
-      const shopName = sv.shop.trim().toLowerCase();
-      const matchJob = tj.find(j => {
-        const jn = (j.job || '').trim().toLowerCase();
-        const ja = (j.address || '').trim().toLowerCase();
-        return jn === shopName || (shopAddr && ja === shopAddr);
-      });
-      if (matchJob) {
-        // Attach the shop notes to that job card (display only — not written to sheet).
-        // If the shop has no notes, preserve the job's own per-ticket note rather
-        // than overwriting it with empty string.
-        if (sv.notes) matchJob.notes = sv.notes;
-        mergedShopOntoJob = true;
-      }
-    }
 
     // Header: add row at TOP, then jobs
     h += `<div class="tcol">`;
@@ -1360,34 +1406,13 @@ function rBoard() {
         style="width:100%;font-size:11px"
         onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}">
     </div>`;
-    // Count: if we merged onto an existing job, the shop is NOT a separate card,
-    // so don't add +1 to the count.
-    const shopCount = (sv && sv.shop && !mergedShopOntoJob) ? 1 : 0;
     h += `<div class="thdr">
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
-      ${sv && sv.shop ? `<span class="shop-badge" style="color:${tc}" onclick="clearShop('${tech}')" title="Click to remove shop visit">+${sv.shop.replace(' Shop','')}</span>` : ''}
-      <span class="tcnt">${tj.length + shopCount}</span>
+      <span class="tcnt">${tj.length}</span>
     </div>
     <div class="tjobs" data-tech="${tech}">`;
-    // Standalone shop card — ONLY if there was no matching draggable ticket to merge onto.
-    let stopOffset = 0;
-    if (sv && sv.shop && !mergedShopOntoJob) {
-      stopOffset = 1;
-      const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
-      const dark = ['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
-      const shopColor = sv.shop === 'North Shop' ? '#3b82f6' : '#10b981';
-      h += `<div class="jc" style="border-left-color:${shopColor};background:${shopColor}10;cursor:default">
-        <button type="button" class="jnumbtn" onclick="event.stopPropagation();openShopNoteInline('${tech}')" title="${sv.notes?'Edit note':'Add note'}" style="width:22px;height:22px;border-radius:50%;background:${shopColor};color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px;border:none;cursor:pointer;padding:0;position:relative">1${sv.notes?'<span class="jnumdot"></span>':''}</button>
-        <div class="jinfo">
-          <span class="jn">${sv.shop}</span>
-          ${sv.notes?`<span class="jnotes">${sv.notes.replace(/</g,'&lt;')}</span>`:''}
-          ${addr?`<span class="ja">📍 ${addr}</span>`:''}
-        </div>
-        ${canWrite?`<button class="db" onclick="event.stopPropagation();clearShop('${tech}')" title="Remove shop ticket">✕</button>`:''}
-      </div>`;
-    }
-    if (!tj.length && !(sv && sv.shop)) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
-    else tj.forEach((j, idx) => { h += jobCard(j, canWrite, idx + 1 + stopOffset, tc); });
+    if (!tj.length) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
+    else tj.forEach((j, idx) => { h += jobCard(j, canWrite, idx + 1, tc); });
     h += `</div></div>`;
   });
   document.getElementById('board').innerHTML = h;
@@ -1564,7 +1589,10 @@ function openDD(id, el) {
   const r = el.getBoundingClientRect();
   let l = r.right-170, t = r.bottom+6;
   if (l<6) l=6; if (t+260>window.innerHeight) t=Math.max(6,r.top-260);
-  document.getElementById('ddp').innerHTML = ['green','orange','yellow','blue','inst','pink','john','close','none'].map(c=>{
+  // Dropdown choices: Close Out / Installation / Untagged removed per Jon-Pol.
+  // Existing tickets with those statuses still work — they just can't be
+  // manually set from the UI anymore. 'none' is still the default for blank cells.
+  document.getElementById('ddp').innerHTML = ['green','orange','yellow','blue','pink','john'].map(c=>{
     const s=c===j.color;
     return `<div class="ddi${s?' sel':''}" style="${s?'background:'+CS[c].s:''}" onclick="chgColor(${id},'${c}')"><span class="ddd" style="background:${CS[c].f}"></span>${SL[c]}</div>`;
   }).join('');
@@ -1625,20 +1653,6 @@ function _writeJobNote(j, noteText) {
 
 function saveJobNote() {
   if (_activeJobNoteId == null) return;
-  // Shop note path
-  if (typeof _activeJobNoteId === 'string' && _activeJobNoteId.startsWith('__shop__')) {
-    const tech = _activeJobNoteId.replace('__shop__','');
-    const note = (document.getElementById('jnotepopText').value || '').trim();
-    closeJobNote();
-    if (shopVisits[tech]) {
-      shopVisits[tech].notes = note;
-      localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-      const col = TECHS.indexOf(tech) + 1;
-      sheetsSetValue(26, col, note ? 'SHOPNOTE:'+note : '').catch(()=>{});
-    }
-    render();
-    return;
-  }
   const j = jobs.find(x => x.id === _activeJobNoteId);
   if (!j) { closeJobNote(); return; }
   const note = (document.getElementById('jnotepopText').value || '').trim();
@@ -1651,19 +1665,6 @@ function saveJobNote() {
 
 function clearJobNote() {
   if (_activeJobNoteId == null) return;
-  // Shop note path
-  if (typeof _activeJobNoteId === 'string' && _activeJobNoteId.startsWith('__shop__')) {
-    const tech = _activeJobNoteId.replace('__shop__','');
-    closeJobNote();
-    if (shopVisits[tech]) {
-      shopVisits[tech].notes = '';
-      localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-      const col = TECHS.indexOf(tech) + 1;
-      sheetsSetValue(26, col, '').catch(()=>{});
-    }
-    render();
-    return;
-  }
   const j = jobs.find(x => x.id === _activeJobNoteId);
   if (!j) { closeJobNote(); return; }
   j.notes = '';
@@ -1786,7 +1787,8 @@ function copyVendorNote(btn, idx) {
   const notes = window.__vendorNotes || [];
   const n = notes[idx];
   if (!n) return;
-  const text = n.header + '\n' + n.body;
+  // Copy only the body — header (e.g., "Synergy Walgreens") is excluded
+  const text = n.body;
   const showOk = () => {
     const original = btn.innerHTML;
     btn.classList.add('ok');
@@ -1852,7 +1854,7 @@ async function loadDriveFolders() {
     sec.style.display = 'none';
     return;
   }
-  if (!gAccessToken) {
+  if (!authToken) {
     sec.style.display = 'none';
     return;
   }
@@ -1861,29 +1863,12 @@ async function loadDriveFolders() {
   grid.innerHTML = '<div class="drive-empty">Loading folders…</div>';
 
   try {
-    // ?q=<parentId> in parents and mimeType is folder; only request the fields we need
-    const q = `'${parentId.replace(/'/g,"\\'")}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&orderBy=name&pageSize=100`;
-    let r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    if (r.status === 401) {
-      // Token expired — silent refresh, retry once
-      await new Promise(res => { tokenReadyCb = res; tokenClient.requestAccessToken({ prompt: '' }); });
-      r = await fetch(url, { headers: { Authorization: `Bearer ${gAccessToken}` } });
-    }
-    if (r.status === 403) {
-      // Most common cause: scope wasn't granted, or folder isn't shared with this user.
-      grid.innerHTML = `<div class="drive-empty">Drive access denied — make sure the parent folder is shared with your Google account, then sign out and back in to re-grant Drive permission.</div>`;
+    const res = await apiCall('/listDriveFolders', { parentFolderId: parentId });
+    if (!res.success) {
+      grid.innerHTML = `<div class="drive-empty">Couldn't load Drive folders: ${(res.error||'unknown error').substring(0,120)}</div>`;
       return;
     }
-    if (!r.ok) {
-      const txt = await r.text().catch(()=>'');
-      console.warn('Drive list failed:', r.status, txt);
-      grid.innerHTML = `<div class="drive-empty">Couldn't load Drive folders (HTTP ${r.status}).</div>`;
-      return;
-    }
-    const data = await r.json();
-    const folders = data.files || [];
-    renderDriveFolders(parentId, folders);
+    renderDriveFolders(parentId, res.folders || []);
   } catch(e) {
     console.error('Drive load error:', e);
     grid.innerHTML = `<div class="drive-empty">Couldn't load Drive folders.</div>`;
@@ -1986,20 +1971,26 @@ function renderDriveFolders(parentId, folders) {
 }
 
 // ════════════════════════════════════════════
-//  SHOP MODAL
+//  SHOP MODAL — creates a real ticket at top of column
 // ════════════════════════════════════════════
 function openShopModal(tech) {
   if (!canWrite) return;
+  // Count existing shop tickets in this tech's column (max 3 per tech)
+  const techCol = TECHS.indexOf(tech) + 1;
+  const shopCount = jobs.filter(j => j.col === techCol &&
+    (j.job === 'North Shop' || j.job === 'South Shop')).length;
+  if (shopCount >= 3) {
+    toast(`${tech} already has 3 shop tickets — max reached`);
+    return;
+  }
   shopModalTech = tech;
-  shopModalSelected = shopVisits[tech]?.shop || null;
+  shopModalSelected = null;
   document.getElementById('shopModalTitle').textContent = `${tech} — Shop Ticket`;
-  document.getElementById('shopNoteInput').value = shopVisits[tech]?.notes || '';
-  document.getElementById('shopOkBtn').style.display = shopModalSelected ? 'block' : 'none';
-  document.getElementById('btnNorth').classList.toggle('sel', shopModalSelected==='North Shop');
-  document.getElementById('btnSouth').classList.toggle('sel', shopModalSelected==='South Shop');
+  document.getElementById('shopNoteInput').value = '';
+  document.getElementById('shopOkBtn').style.display = 'none';
+  document.getElementById('btnNorth').classList.remove('sel');
+  document.getElementById('btnSouth').classList.remove('sel');
   document.getElementById('shopModalBg').classList.add('open');
-  // Focus notes after brief delay
-  setTimeout(() => { if (shopModalSelected) document.getElementById('shopNoteInput').focus(); }, 100);
 }
 
 function selectShop(shop) {
@@ -2013,50 +2004,35 @@ function selectShop(shop) {
 async function confirmShop() {
   if (!shopModalTech || !shopModalSelected) return;
   const notes = document.getElementById('shopNoteInput').value.trim();
-  const savedTech = shopModalTech;
-  const savedShop = shopModalSelected;
-  const shopAddr = SHOP_LOCATIONS[savedShop]?.address || '';
+  const tech = shopModalTech;
+  const shop = shopModalSelected;
+  const shopAddr = SHOP_LOCATIONS[shop]?.address || '';
   closeShopModal();
   toast('Adding shop ticket...');
 
-  const col = TECHS.indexOf(savedTech) + 1;
-  if (col < 1) { toast('Tech not found'); return; }
-
-  // Pre-populate geoCache from hardcoded shop coords — instant, no network needed
-  if (shopAddr) {
-    const shopCoords = SHOP_LOCATIONS[savedShop];
-    if (shopCoords?.lat) geoCache[shopAddr] = { lat: shopCoords.lat, lng: shopCoords.lng };
+  // Pre-populate geoCache from hardcoded shop coords so map renders instantly
+  if (shopAddr && SHOP_LOCATIONS[shop]?.lat) {
+    geoCache[shopAddr] = { lat: SHOP_LOCATIONS[shop].lat, lng: SHOP_LOCATIONS[shop].lng };
   }
 
-  // Write shop ticket to row 25 (below all job/vendor rows, no conflicts)
-  await sheetsClear(25, col);
-  const cellVal = savedShop + (shopAddr ? ', '+shopAddr : '');
-  await sheetsSetValue(25, col, cellVal);
-  await sheetsSetBackground(25, col, '#00ff00');
+  // Build canonical job input "Name, Address"
+  const jobInput = shopAddr ? `${shop}, ${shopAddr}` : shop;
 
-  // Store notes in row 26 so all devices read them on sync
-  await sheetsSetValue(26, col, notes ? 'SHOPNOTE:'+notes : '').catch(()=>{});
-  // Also cache locally
-  shopVisits[savedTech] = { shop: savedShop, notes };
-  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-
-  toast(savedTech+' → '+savedShop);
-  loadData();
-}
-
-async function clearShop(tech) {
-  delete shopVisits[tech];
-  localStorage.setItem('wrs_shops', JSON.stringify(shopVisits));
-  const col = TECHS.indexOf(tech) + 1;
-  if (col >= 1) {
-    // Clear shop note from row 26 and shop ticket from row 25
-    await sheetsSetValue(26, col, '').catch(()=>{});
-    await sheetsClear(25, col);
-
+  isSaving = true;
+  try {
+    const res = await apiCall('/addJobAtTop', { techName: tech, jobInput, jobNote: notes });
+    if (!res.success) {
+      toast(res.error || 'Failed to add shop ticket');
+      return;
+    }
+    toast(`${tech} → ${shop}`);
+  } catch (e) {
+    toast('Failed to add shop ticket');
+    console.error(e);
+  } finally {
+    isSaving = false;
+    loadData();
   }
-  render();
-  toast('Shop removed from ' + tech);
-  loadData();
 }
 
 function closeShopModal() {
@@ -2064,32 +2040,658 @@ function closeShopModal() {
   shopModalTech = null; shopModalSelected = null;
 }
 
-// Open the per-job note popup pre-loaded with the shop ticket's notes.
-// Clicking the circle badge on a shop card triggers this.
-function openShopNoteInline(tech) {
-  if (!canWrite) return;
-  const sv = shopVisits[tech];
-  if (!sv || !sv.shop) return;
-  // Re-use the existing per-job note popup but wire Save/Clear to shop note
-  _activeJobNoteId = '__shop__' + tech;
-  const pop  = document.getElementById('jnotepop');
-  const bg   = document.getElementById('jnotebg');
-  const ta   = document.getElementById('jnotepopText');
-  const lbl  = document.getElementById('jnotepopJob');
-  const clr  = document.getElementById('jnotepopClear');
-  const addr = SHOP_LOCATIONS[sv.shop]?.address || '';
-  lbl.textContent = sv.shop + (addr ? ' — ' + addr : '');
-  ta.value = sv.notes || '';
-  clr.style.display = (sv.notes && String(sv.notes).trim()) ? '' : 'none';
-  bg.classList.add('show');
-  pop.classList.add('show');
-  pop.style.left = '50%'; pop.style.top = '50%'; pop.style.transform = 'translate(-50%,-50%)';
-  setTimeout(() => ta.focus(), 50);
-}
 // Close modal on background click
 document.getElementById('shopModalBg').addEventListener('click', function(e) {
   if(e.target===this) closeShopModal();
 });
+
+// ════════════════════════════════════════════
+//  ANNOUNCEMENTS — company-wide bulletin
+// ════════════════════════════════════════════
+// Admins post short messages; techs see a popup once per day (per device).
+// Auto-expire after `expiresOn` date.
+
+let activeAnnouncements = [];
+
+const ANN_COLORS = {
+  blue:  { bg: 'rgba(59,130,246,.15)',  border: 'rgba(59,130,246,.5)',  accent: '#3b82f6', icon: '📢' },
+  red:   { bg: 'rgba(239,68,68,.15)',   border: 'rgba(239,68,68,.5)',   accent: '#ef4444', icon: '⚠️' },
+  green: { bg: 'rgba(34,197,94,.15)',   border: 'rgba(34,197,94,.5)',   accent: '#22c55e', icon: '✓' },
+  amber: { bg: 'rgba(245,158,11,.15)',  border: 'rgba(245,158,11,.5)',  accent: '#f59e0b', icon: '🔔' },
+};
+
+async function checkAnnouncements() {
+  try {
+    const res = await apiCall('/getAnnouncements', {});
+    activeAnnouncements = res.announcements || [];
+    if (activeAnnouncements.length === 0) return;
+    // Show the most recent announcement if not already dismissed today
+    const latest = activeAnnouncements[0];
+    const todayKey = `ann_dismissed_${latest.id}_${new Date().toISOString().slice(0,10)}`;
+    if (localStorage.getItem(todayKey)) return; // already dismissed today
+    showAnnouncement(latest);
+  } catch (e) {
+    console.error('Announcement check failed:', e);
+  }
+}
+
+function showAnnouncement(ann) {
+  const colors = ANN_COLORS[ann.color] || ANN_COLORS.blue;
+  const popup = document.getElementById('annPopup');
+  const icon = document.getElementById('annIcon');
+  popup.style.borderColor = colors.accent;
+  icon.style.background = colors.bg;
+  icon.style.border = `1px solid ${colors.border}`;
+  icon.textContent = colors.icon;
+  document.getElementById('annText').textContent = ann.text;
+  const postedDate = ann.postedAt ? new Date(ann.postedAt).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '';
+  document.getElementById('annPostedBy').textContent = `Posted by ${ann.postedBy || 'Admin'}${postedDate?' · '+postedDate:''}`;
+  const linkEl = document.getElementById('annLink');
+  if (ann.link) {
+    linkEl.href = ann.link;
+    linkEl.textContent = '🔗 ' + ann.link;
+    linkEl.style.display = 'inline-block';
+  } else {
+    linkEl.style.display = 'none';
+  }
+  // Stash the active ID so dismiss knows which to suppress
+  document.getElementById('annPopupBg').dataset.annId = ann.id;
+  document.getElementById('annPopupBg').style.display = 'flex';
+}
+
+function dismissAnnouncement() {
+  const bg = document.getElementById('annPopupBg');
+  const annId = bg.dataset.annId;
+  if (annId) {
+    // Suppress until tomorrow
+    localStorage.setItem(`ann_dismissed_${annId}_${new Date().toISOString().slice(0,10)}`, '1');
+  }
+  bg.style.display = 'none';
+}
+
+async function openAnnAdmin() {
+  if (!curUser || !(curUser.role === 'admin' || curUser.role === 'write')) return;
+  // Pre-fill expiry: 7 days from today by default
+  const def = new Date(); def.setDate(def.getDate() + 7);
+  document.getElementById('annComposeExpiry').value = def.toISOString().slice(0,10);
+  document.getElementById('annComposeText').value = '';
+  document.getElementById('annComposeLink').value = '';
+  document.getElementById('annComposeColor').value = 'blue';
+  document.getElementById('annAdminBg').style.display = 'flex';
+  await renderAnnAdminList();
+}
+
+function closeAnnAdmin() {
+  document.getElementById('annAdminBg').style.display = 'none';
+}
+
+async function renderAnnAdminList() {
+  const listEl = document.getElementById('annAdminList');
+  try {
+    const res = await apiCall('/getAnnouncements', {});
+    const items = res.announcements || [];
+    if (!items.length) {
+      listEl.innerHTML = '<div style="text-align:center;padding:14px;color:var(--dm2);font-size:12px;font-style:italic">No active announcements.</div>';
+      return;
+    }
+    listEl.innerHTML = items.map(a => {
+      const colors = ANN_COLORS[a.color] || ANN_COLORS.blue;
+      const expDate = new Date(a.expiresOn + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' });
+      const postedDate = a.postedAt ? new Date(a.postedAt).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+      return `<div style="background:${colors.bg};border:1px solid ${colors.border};border-radius:var(--r8);padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:var(--tx);line-height:1.4;margin-bottom:5px;white-space:pre-wrap;word-break:break-word">${a.text.replace(/</g,'&lt;')}</div>
+            ${a.link?`<div style="font-size:11px;color:${colors.accent};margin-bottom:4px;word-break:break-all">🔗 ${a.link.replace(/</g,'&lt;')}</div>`:''}
+            <div style="font-size:10px;color:var(--dm2)">By ${a.postedBy} · Posted ${postedDate} · Expires ${expDate}</div>
+          </div>
+          <button onclick="deleteAnnouncement('${a.id}')" style="background:transparent;border:1px solid var(--rd);border-radius:6px;color:var(--rd);padding:5px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0">Remove</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:var(--rd);text-align:center;padding:10px">Couldn\'t load announcements.</div>';
+  }
+}
+
+async function postAnnouncement() {
+  const text = document.getElementById('annComposeText').value.trim();
+  const color = document.getElementById('annComposeColor').value;
+  const link = document.getElementById('annComposeLink').value.trim();
+  const expiresOn = document.getElementById('annComposeExpiry').value;
+  if (!text) { toast('Message is required'); return; }
+  if (!expiresOn) { toast('Expiry date is required'); return; }
+  try {
+    const res = await apiCall('/addAnnouncement', { text, color, link, expiresOn });
+    if (!res.success) { toast(res.error || 'Failed to post'); return; }
+    toast('Announcement posted');
+    closeAnnAdmin();
+  } catch (e) {
+    toast('Failed to post announcement');
+    console.error(e);
+  }
+}
+
+async function deleteAnnouncement(id) {
+  try {
+    const res = await apiCall('/deleteAnnouncement', { id });
+    if (!res.success) { toast(res.error || 'Failed to remove'); return; }
+    toast('Announcement removed');
+    await renderAnnAdminList();
+  } catch (e) {
+    toast('Failed to remove');
+    console.error(e);
+  }
+}
+
+// ════════════════════════════════════════════
+//  ON-CALL ROTATION
+// ════════════════════════════════════════════
+// 6-week deterministic cycle starting Sat Mar 21, 2026 = Louis.
+// Order: Louis → Christian → Geni → Jeff → Mijail → Alex → (repeat)
+// Each tech is on call for Sat + Sun of one week.
+// The rotation is computed from the anchor — nothing is stored.
+
+const ONCALL_TECHS = ['Louis','Christian','Geni','Jeff','Mijail','Alex'];
+const ONCALL_ANCHOR = new Date(2026, 2, 21); // Sat Mar 21, 2026 = Louis (week 0)
+
+let oncallAnchor = null; // first Saturday of the displayed range
+let oncallMode = 'six';  // 'six' (default) or 'year'
+
+// Given a Saturday date, return which tech is on call that weekend.
+function whoIsOnCall(saturday) {
+  const wkMs = 7 * 24 * 60 * 60 * 1000;
+  const a = new Date(ONCALL_ANCHOR.getFullYear(), ONCALL_ANCHOR.getMonth(), ONCALL_ANCHOR.getDate());
+  const s = new Date(saturday.getFullYear(), saturday.getMonth(), saturday.getDate());
+  const diffWeeks = Math.round((s - a) / wkMs);
+  let idx = diffWeeks % ONCALL_TECHS.length;
+  if (idx < 0) idx += ONCALL_TECHS.length;
+  return ONCALL_TECHS[idx];
+}
+
+// Return the Saturday of the week containing `d`
+function getSaturdayOfWeek(d) {
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const offset = (6 - out.getDay() + 7) % 7;
+  out.setDate(out.getDate() + offset);
+  return out;
+}
+
+// Given any date, find the Saturday <= that date (rolls back if mid-week)
+function getCurrentOnCallSaturday(d) {
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // 0=Sun, 1=Mon, ..., 6=Sat
+  // If Sun, the on-call weekend started yesterday → go back 1 day
+  // If Mon-Fri, the upcoming weekend (Sat) is on-call → go forward to Sat
+  // If Sat, that's the on-call day already
+  const day = out.getDay();
+  if (day === 6) return out;           // Saturday → today is the start
+  if (day === 0) { out.setDate(out.getDate() - 1); return out; } // Sunday → yesterday was Sat
+  // Mon-Fri → upcoming Saturday
+  out.setDate(out.getDate() + (6 - day));
+  return out;
+}
+
+function openOncall() {
+  if (!oncallAnchor) {
+    oncallAnchor = getSaturdayOfWeek(new Date());
+  }
+  document.getElementById('oncallBg').style.display = 'flex';
+  renderOncall();
+}
+
+function closeOncall() {
+  document.getElementById('oncallBg').style.display = 'none';
+}
+
+function oncallSetMode(mode) {
+  oncallMode = mode;
+  document.getElementById('oncallBtnSix').style.background  = mode === 'six'  ? 'var(--ac)' : 'var(--sf2)';
+  document.getElementById('oncallBtnSix').style.color       = mode === 'six'  ? '#fff' : 'var(--tx)';
+  document.getElementById('oncallBtnYear').style.background = mode === 'year' ? 'var(--ac)' : 'var(--sf2)';
+  document.getElementById('oncallBtnYear').style.color      = mode === 'year' ? '#fff' : 'var(--tx)';
+  renderOncall();
+}
+
+function oncallNav(delta) {
+  if (!oncallAnchor) oncallAnchor = getSaturdayOfWeek(new Date());
+  const out = new Date(oncallAnchor);
+  // In 6-week mode: step 6 weeks. In year mode: step 1 year.
+  if (oncallMode === 'six') {
+    out.setDate(out.getDate() + (delta * 6 * 7));
+  } else {
+    out.setFullYear(out.getFullYear() + delta);
+  }
+  oncallAnchor = out;
+  renderOncall();
+}
+
+function oncallGoToday() {
+  oncallAnchor = getSaturdayOfWeek(new Date());
+  renderOncall();
+}
+
+// Reminder banner: shown all week (Mon-Sun) to the tech currently on call.
+// "Currently on call" means: today falls in the Mon..Sun window where Sat-Sun
+// of that window is the on-call weekend.
+function updateOncallBanner() {
+  const banner = document.getElementById('oncallBanner');
+  if (!banner) return;
+  if (!curUser) { banner.style.display = 'none'; return; }
+  // Only show for techs in the rotation
+  if (!ONCALL_TECHS.includes(curUser.tech)) { banner.style.display = 'none'; return; }
+
+  const now = new Date();
+  // Find the Saturday of the on-call weekend for THIS week (Mon-Sun window).
+  // If today is Sun, the on-call weekend was yesterday (Sat). Otherwise, the
+  // upcoming Saturday (this week).
+  const onCallSat = getCurrentOnCallSaturday(now);
+  const onCallSun = new Date(onCallSat); onCallSun.setDate(onCallSun.getDate()+1);
+  const onCallTech = whoIsOnCall(onCallSat);
+
+  if (onCallTech !== curUser.tech) { banner.style.display = 'none'; return; }
+
+  const tc = TC[curUser.tech] || '#fff';
+  const satLbl = `${MONTHS[onCallSat.getMonth()].slice(0,3)} ${onCallSat.getDate()}`;
+  const sunLbl = `${MONTHS[onCallSun.getMonth()].slice(0,3)} ${onCallSun.getDate()}`;
+  banner.innerHTML = `🚨 <span style="font-weight:800">${curUser.tech}</span> — You're on call this weekend: <span style="font-weight:800">Sat ${satLbl}</span> &amp; <span style="font-weight:800">Sun ${sunLbl}</span>`;
+  banner.style.display = 'block';
+}
+
+function renderOncall() {
+  if (oncallMode === 'year') renderOncallYear();
+  else                       renderOncallSix();
+}
+
+function renderOncallSix() {
+  const grid = document.getElementById('oncallGrid');
+  const todayStr = fmtDate(new Date());
+  const weekends = [];
+  for (let i = 0; i < 6; i++) {
+    const sat = new Date(oncallAnchor); sat.setDate(sat.getDate() + i*7);
+    const sun = new Date(sat); sun.setDate(sun.getDate()+1);
+    weekends.push({ sat, sun, tech: whoIsOnCall(sat) });
+  }
+
+  const first = weekends[0].sat;
+  const last  = weekends[5].sun;
+  const sameYear = first.getFullYear() === last.getFullYear();
+  const label = sameYear
+    ? `${MONTHS[first.getMonth()].slice(0,3)} ${first.getDate()} – ${MONTHS[last.getMonth()].slice(0,3)} ${last.getDate()}, ${last.getFullYear()}`
+    : `${MONTHS[first.getMonth()].slice(0,3)} ${first.getDate()}, ${first.getFullYear()} – ${MONTHS[last.getMonth()].slice(0,3)} ${last.getDate()}, ${last.getFullYear()}`;
+  document.getElementById('oncallLabel').textContent = label;
+
+  let html = `<div style="display:grid;grid-template-columns:120px 1fr 1fr;gap:8px;margin-bottom:6px;font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-align:center;padding:0 2px">
+    <div style="text-align:left;padding-left:8px">WEEK</div><div>SATURDAY</div><div>SUNDAY</div>
+  </div>`;
+  weekends.forEach(w => {
+    const tc = TC[w.tech] || '#888';
+    const darkBgs = ['#006400','#0066FF','#B800FF','#FF00FF','#000080','#8B0000','#191970'];
+    const isDark = darkBgs.includes(tc) || tc.toLowerCase() === '#000000';
+    const txtColor = isDark ? '#fff' : '#000';
+    const isThisWeek = (fmtDate(w.sat) <= todayStr && todayStr <= fmtDate(w.sun));
+    const isPast = fmtDate(w.sun) < todayStr;
+
+    html += `<div style="display:grid;grid-template-columns:120px 1fr 1fr;gap:8px;margin-bottom:6px;${isPast?'opacity:.5;':''}">
+      <div style="background:${tc};color:${txtColor};border-radius:var(--r8);padding:14px 10px;font-weight:800;font-size:14px;text-align:center;border:${isThisWeek?'2px solid var(--ac)':'1px solid '+tc};display:flex;align-items:center;justify-content:center">${w.tech}</div>
+      <div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:14px;text-align:center">
+        <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px">SAT</div>
+        <div style="font-size:14px;font-weight:700;color:var(--tx);margin-top:2px">${MONTHS[w.sat.getMonth()].slice(0,3)} ${w.sat.getDate()}</div>
+      </div>
+      <div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:14px;text-align:center">
+        <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px">SUN</div>
+        <div style="font-size:14px;font-weight:700;color:var(--tx);margin-top:2px">${MONTHS[w.sun.getMonth()].slice(0,3)} ${w.sun.getDate()}</div>
+      </div>
+    </div>`;
+  });
+
+  grid.innerHTML = html;
+}
+
+function renderOncallYear() {
+  // 52 consecutive weekends starting from oncallAnchor
+  const grid = document.getElementById('oncallGrid');
+  const todayStr = fmtDate(new Date());
+  const weekends = [];
+  for (let i = 0; i < 52; i++) {
+    const sat = new Date(oncallAnchor); sat.setDate(sat.getDate() + i*7);
+    const sun = new Date(sat); sun.setDate(sun.getDate()+1);
+    weekends.push({ sat, sun, tech: whoIsOnCall(sat) });
+  }
+
+  const first = weekends[0].sat;
+  const last  = weekends[51].sun;
+  const sameYear = first.getFullYear() === last.getFullYear();
+  const label = sameYear
+    ? `${first.getFullYear()} · ${MONTHS[first.getMonth()].slice(0,3)} – ${MONTHS[last.getMonth()].slice(0,3)}`
+    : `${MONTHS[first.getMonth()].slice(0,3)} ${first.getFullYear()} – ${MONTHS[last.getMonth()].slice(0,3)} ${last.getFullYear()}`;
+  document.getElementById('oncallLabel').textContent = label;
+
+  // Group by month for a clean year layout
+  const byMonth = {};
+  weekends.forEach(w => {
+    const key = `${w.sat.getFullYear()}-${String(w.sat.getMonth()+1).padStart(2,'0')}`;
+    (byMonth[key] ||= []).push(w);
+  });
+
+  let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:12px">';
+  Object.keys(byMonth).sort().forEach(key => {
+    const [yr, mo] = key.split('-').map(Number);
+    html += `<div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:10px">
+      <div style="font-size:12px;font-weight:800;color:var(--dm2);letter-spacing:1px;margin-bottom:8px;text-align:center">${MONTHS[mo-1]} ${yr}</div>`;
+    byMonth[key].forEach(w => {
+      const tc = TC[w.tech] || '#888';
+      const darkBgs = ['#006400','#0066FF','#B800FF','#FF00FF','#000080','#8B0000','#191970'];
+      const isDark = darkBgs.includes(tc) || tc.toLowerCase() === '#000000';
+      const txtColor = isDark ? '#fff' : '#000';
+      const isThisWeek = (fmtDate(w.sat) <= todayStr && todayStr <= fmtDate(w.sun));
+      const isPast = fmtDate(w.sun) < todayStr;
+      html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;${isPast?'opacity:.45;':''}">
+        <div style="flex:1;font-size:11px;color:var(--dm2);font-weight:600">Sat ${w.sat.getDate()} – Sun ${w.sun.getDate()}</div>
+        <div style="background:${tc};color:${txtColor};border-radius:6px;padding:4px 10px;font-weight:800;font-size:11px;min-width:78px;text-align:center;border:${isThisWeek?'2px solid var(--ac)':'1px solid transparent'}">${w.tech}</div>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+  html += '</div>';
+  grid.innerHTML = html;
+}
+
+// ════════════════════════════════════════════
+//  INSTALLATION CALENDAR
+// ════════════════════════════════════════════
+// Admins schedule future installs. Stored in KV (via Worker), date-keyed.
+// Clicking "Promote" pushes the install to Jeff's column as a real ticket.
+// Techs see the calendar read-only.
+
+let calendarInstalls = [];        // all installs loaded from Worker
+let calendarMode = 'week';         // 'week' (default) or 'month'
+let calendarAnchor = null;         // a Date that anchors the current view (any day in the week/month being shown)
+let installDayDate = null;         // YYYY-MM-DD currently being edited
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+// Helpers to format / manipulate dates as YYYY-MM-DD strings
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// Start of the week containing `d` (Sunday)
+function startOfWeek(d) {
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  out.setDate(out.getDate() - out.getDay());
+  return out;
+}
+
+async function openCalendar() {
+  if (!calendarAnchor) calendarAnchor = new Date();
+  document.getElementById('calendarBg').style.display = 'flex';
+  await loadCalendarData();
+  renderCalendar();
+}
+
+function closeCalendar() {
+  document.getElementById('calendarBg').style.display = 'none';
+}
+
+async function loadCalendarData() {
+  try {
+    const res = await apiCall('/getInstalls', {});
+    calendarInstalls = res.installs || [];
+  } catch (e) {
+    console.error('Calendar load failed:', e);
+    calendarInstalls = [];
+  }
+}
+
+function calSetMode(mode) {
+  calendarMode = mode;
+  document.getElementById('calBtnWeek').style.background  = mode === 'week'  ? 'var(--ac)' : 'var(--sf2)';
+  document.getElementById('calBtnWeek').style.color       = mode === 'week'  ? '#fff' : 'var(--tx)';
+  document.getElementById('calBtnMonth').style.background = mode === 'month' ? 'var(--ac)' : 'var(--sf2)';
+  document.getElementById('calBtnMonth').style.color      = mode === 'month' ? '#fff' : 'var(--tx)';
+  renderCalendar();
+}
+
+function calNavStep(delta) {
+  if (!calendarAnchor) calendarAnchor = new Date();
+  const d = new Date(calendarAnchor);
+  if (calendarMode === 'week') {
+    d.setDate(d.getDate() + (delta * 7));
+  } else {
+    d.setMonth(d.getMonth() + delta);
+  }
+  calendarAnchor = d;
+  renderCalendar();
+}
+
+function calGoToday() {
+  calendarAnchor = new Date();
+  renderCalendar();
+}
+
+function renderCalendar() {
+  if (!calendarAnchor) calendarAnchor = new Date();
+  if (calendarMode === 'week') renderCalendarWeek();
+  else                          renderCalendarMonth();
+
+  // Footer hint
+  const isAdmin = curUser && (curUser.role === 'admin' || curUser.role === 'write');
+  document.getElementById('calFooter').textContent = isAdmin
+    ? `Click any day to schedule an install (max 2/day) · Click an existing install to manage or promote it`
+    : `Read-only · Contact an admin to schedule installs`;
+}
+
+// Start of the WORK week containing `d` (Monday)
+function startOfWorkWeek(d) {
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // getDay(): 0=Sun, 1=Mon, ..., 6=Sat
+  // We want Monday. If Sun (0), go back 6 days; otherwise go back (day - 1).
+  const offset = out.getDay() === 0 ? 6 : out.getDay() - 1;
+  out.setDate(out.getDate() - offset);
+  return out;
+}
+
+function renderCalendarWeek() {
+  const weekStart = startOfWorkWeek(calendarAnchor); // Monday
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+4); // Friday
+  const label = `${MONTHS[weekStart.getMonth()].slice(0,3)} ${weekStart.getDate()} – ${MONTHS[weekEnd.getMonth()].slice(0,3)} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`;
+  document.getElementById('calMonthLabel').textContent = label;
+
+  const todayStr = fmtDate(new Date());
+  let html = '';
+  for (let i = 0; i < 5; i++) { // Mon-Fri only
+    const d = new Date(weekStart); d.setDate(d.getDate()+i);
+    const dateStr = fmtDate(d);
+    const installs = calendarInstalls.filter(x => x.date === dateStr);
+    const isToday = (dateStr === todayStr);
+    const isPast = (dateStr < todayStr);
+    const clickable = true;
+    html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:200px;padding:10px;cursor:${clickable?'pointer':'default'};${isPast?'opacity:.55;':''}transition:background .12s">
+      <div style="font-size:13px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':'var(--tx)'};margin-bottom:6px">${d.getDate()}</div>`;
+    installs.forEach(install => {
+      html += `<div style="background:#8b5cf6;color:#fff;font-size:11px;font-weight:700;padding:5px 7px;border-radius:5px;margin-bottom:5px;line-height:1.3;word-break:break-word" title="${install.name.replace(/"/g,'&quot;')}">${install.name}${install.notes?`<div style='font-weight:500;font-size:10px;margin-top:3px;opacity:.92;line-height:1.35'>${install.notes.replace(/</g,'&lt;').slice(0,80)}${install.notes.length>80?'…':''}</div>`:''}</div>`;
+    });
+    html += `</div>`;
+  }
+  document.getElementById('calGrid').innerHTML = html;
+}
+
+function renderCalendarMonth() {
+  const year = calendarAnchor.getFullYear();
+  const month = calendarAnchor.getMonth();
+  document.getElementById('calMonthLabel').textContent = `${MONTHS[month]} ${year}`;
+
+  // Anchor: Monday of the week containing the 1st of the month
+  const firstOfMonth = new Date(year, month, 1);
+  const gridStart = startOfWorkWeek(firstOfMonth);
+  // End: last day of month, then extend to its Friday
+  const lastOfMonth = new Date(year, month + 1, 0);
+  let gridEnd = startOfWorkWeek(lastOfMonth);
+  gridEnd.setDate(gridEnd.getDate() + 4); // Friday of that week
+
+  const todayStr = fmtDate(new Date());
+
+  let html = '';
+  let d = new Date(gridStart);
+  while (d <= gridEnd) {
+    // Iterate Mon-Fri, then skip Sat & Sun
+    for (let i = 0; i < 5; i++) {
+      const dateStr = fmtDate(d);
+      const installs = calendarInstalls.filter(i => i.date === dateStr);
+      const isToday = (dateStr === todayStr);
+      const isPast = (dateStr < todayStr);
+      const outOfMonth = (d.getMonth() !== month);
+      const clickable = true;
+      html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:90px;padding:6px 7px;cursor:${clickable?'pointer':'default'};${outOfMonth?'opacity:.35;':''}${isPast && !outOfMonth?'opacity:.55;':''}transition:background .12s">
+        <div style="font-size:12px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':outOfMonth?'var(--dm2)':'var(--tx)'};margin-bottom:3px">${d.getDate()}</div>`;
+      installs.forEach(install => {
+        html += `<div style="background:#8b5cf6;color:#fff;font-size:10px;font-weight:700;padding:3px 5px;border-radius:4px;margin-bottom:3px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${install.name.replace(/"/g,'&quot;')}">${install.name}</div>`;
+      });
+      html += `</div>`;
+      d.setDate(d.getDate() + 1);
+    }
+    // Skip weekend
+    d.setDate(d.getDate() + 2);
+  }
+  document.getElementById('calGrid').innerHTML = html;
+}
+
+function openInstallDay(dateStr) {
+  if (!curUser) return;
+  const isAdmin = (curUser.role === 'admin' || curUser.role === 'write');
+  installDayDate = dateStr;
+  // Format date nicely for display
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m-1, d);
+  const dayLabel = dt.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+  const dayOfWeek = dt.getDay(); // 0=Sun, 6=Sat
+  const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+  document.getElementById('installDayTitle').textContent = 'Installation';
+  document.getElementById('installDaySubtitle').textContent = dayLabel + (isWeekend ? ' · Weekend (no installs allowed)' : '');
+
+  // List existing installs for this day
+  const installs = calendarInstalls.filter(i => i.date === dateStr);
+  const listEl = document.getElementById('installDayList');
+  if (installs.length === 0) {
+    listEl.innerHTML = isAdmin ? '' : '<div style="text-align:center;padding:14px;color:var(--dm2);font-size:12px;font-style:italic">No installs scheduled for this day.</div>';
+  } else {
+    listEl.innerHTML = installs.map(ins => `
+      <div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px;word-break:break-word">${ins.name.replace(/</g,'&lt;')}</div>
+            ${ins.address?`<div style="font-size:11px;color:var(--dm2);margin-bottom:3px;word-break:break-word">📍 ${ins.address.replace(/</g,'&lt;')}</div>`:''}
+            ${ins.notes?`<div style="font-size:11px;color:#f97316;font-weight:600;line-height:1.4;word-break:break-word">${ins.notes.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`:''}
+          </div>
+          ${isAdmin ? `<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+            <button onclick="promoteInstall('${ins.date}', ${ins.slot})" style="background:#10b981;border:none;border-radius:6px;color:#fff;padding:5px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap" title="Move this install to Jeff's column now">→ Promote</button>
+            <button onclick="deleteInstall('${ins.date}', ${ins.slot})" style="background:transparent;border:1px solid var(--rd);border-radius:6px;color:var(--rd);padding:5px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap">Delete</button>
+          </div>`:''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // Hide add-form + button entirely for read-only users OR weekends
+  const formEl = document.getElementById('installDayForm');
+  const addBtn = document.getElementById('installAddBtn');
+  if (!isAdmin || isWeekend) {
+    formEl.style.display = 'none';
+    addBtn.style.display = 'none';
+  } else {
+    formEl.style.display = '';
+    addBtn.style.display = '';
+    // Show/hide add form depending on capacity
+    if (installs.length >= 2) {
+      formEl.style.opacity = '.4';
+      formEl.style.pointerEvents = 'none';
+      addBtn.disabled = true;
+      addBtn.style.opacity = '.4';
+      addBtn.style.cursor = 'not-allowed';
+      addBtn.textContent = 'Day Full (max 2)';
+    } else {
+      formEl.style.opacity = '1';
+      formEl.style.pointerEvents = 'auto';
+      addBtn.disabled = false;
+      addBtn.style.opacity = '1';
+      addBtn.style.cursor = 'pointer';
+      addBtn.textContent = 'Add Install';
+    }
+    // Clear input fields
+    document.getElementById('installNameInput').value = '';
+    document.getElementById('installAddrInput').value = '';
+    document.getElementById('installNotesInput').value = '';
+  }
+
+  document.getElementById('installDayBg').style.display = 'flex';
+}
+
+function closeInstallDay() {
+  document.getElementById('installDayBg').style.display = 'none';
+  installDayDate = null;
+}
+
+async function submitInstall() {
+  if (!installDayDate) return;
+  const name  = document.getElementById('installNameInput').value.trim();
+  const addr  = document.getElementById('installAddrInput').value.trim();
+  const notes = document.getElementById('installNotesInput').value.trim();
+  if (!name) {
+    toast('Job name is required');
+    return;
+  }
+  try {
+    const res = await apiCall('/addInstall', { date: installDayDate, name, address: addr, notes });
+    if (!res.success) {
+      toast(res.error || 'Failed to add install');
+      return;
+    }
+    toast('Install scheduled');
+    closeInstallDay();
+    await loadCalendarData();
+    renderCalendar();
+  } catch (e) {
+    toast('Failed to add install');
+    console.error(e);
+  }
+}
+
+async function deleteInstall(date, slot) {
+  if (!confirm('Delete this scheduled install?')) return;
+  try {
+    const res = await apiCall('/deleteInstall', { date, slot });
+    if (!res.success) {
+      toast(res.error || 'Failed to delete');
+      return;
+    }
+    toast('Install deleted');
+    await loadCalendarData();
+    openInstallDay(date);
+    renderCalendar();
+  } catch (e) {
+    toast('Failed to delete install');
+    console.error(e);
+  }
+}
+
+async function promoteInstall(date, slot) {
+  try {
+    const res = await apiCall('/promoteInstall', { date, slot });
+    if (!res.success) {
+      toast(res.error || 'Failed to promote');
+      return;
+    }
+    toast("Install moved to Jeff's column");
+    closeInstallDay();
+    await loadCalendarData();
+    renderCalendar();
+    // Refresh the main board to show the new ticket
+    loadData();
+  } catch (e) {
+    toast('Failed to promote install');
+    console.error(e);
+  }
+}
 
 // ════════════════════════════════════════════
 //  DRAG & DROP
@@ -2368,11 +2970,8 @@ function renderMapList(vj, legs, totalMin, totalMi) {
 async function renderTechView(withMap=true) {
   if (!curUser?.tech) return;
   const tech = curUser.tech;
-  // Reload shop notes from localStorage
-  try { const s=localStorage.getItem('wrs_shops'); if(s){const p=JSON.parse(s);Object.keys(p).forEach(k=>shopVisits[k]=p[k]);}} catch(e){}
   // Kick off Drive folder load in parallel (no await — don't block the render)
   loadDriveFolders();
-  const sv = shopVisits[tech]; // may have notes to display
   const tc = TC[tech]||'#888';
   const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
   const tvTickets = document.getElementById('tvTickets');
@@ -2420,26 +3019,13 @@ async function renderTechView(withMap=true) {
 
   // Build stops — shop always gets coords directly from SHOP_LOCATIONS (no geoCache needed)
   const SHOP_NAMES = Object.keys(SHOP_LOCATIONS);
-  // The tech's configured shop visit (if any) — used to attach notes to a
-  // matching draggable ticket so we don't render a separate "double ticket".
-  const svShopAddr = (sv?.shop && SHOP_LOCATIONS[sv.shop]?.address || '').trim().toLowerCase();
-  const svShopName = (sv?.shop || '').trim().toLowerCase();
   const allStops = myJobs.map((j,i)=>{
     const isShop = SHOP_NAMES_SET.has(j.job);
-    // Notes attach if the job IS a known shop OR if the job's name/address
-    // matches the tech's currently-configured shop visit.
-    const jn = (j.job||'').trim().toLowerCase();
-    const ja = (j.address||'').trim().toLowerCase();
-    const matchesShopVisit = sv && sv.shop && (jn === svShopName || (svShopAddr && ja === svShopAddr));
-    // Shop notes take precedence when the stop is a shop visit; otherwise
-    // show the per-job note (added via the clickable number badge).
-    const notes = (isShop || matchesShopVisit)
-      ? (shopVisits[tech]?.notes || j.notes || '')
-      : (j.notes || '');
+    const notes = j.notes || '';
     let lat, lng;
     if (isShop) {
       // Always use hardcoded coords — never depend on geocache for shops
-      const shopLoc = SHOP_LOCATIONS[j.job] || SHOP_LOCATIONS[sv?.shop];
+      const shopLoc = SHOP_LOCATIONS[j.job];
       lat = shopLoc?.lat || null;
       lng = shopLoc?.lng || null;
     } else {
@@ -2447,7 +3033,7 @@ async function renderTechView(withMap=true) {
       lat = cached?.lat || j.lat || null;
       lng = cached?.lng || j.lng || null;
     }
-    return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop:(isShop||matchesShopVisit), jobRef:j };
+    return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop, jobRef:j };
   });
 
   // Always build cards immediately so the list is visible
@@ -2542,7 +3128,7 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
       <div style="flex:1;min-width:0;user-select:text">
         <div class="tv-job">${s.name}</div>
         ${s.addr?`<div class="tv-addr" style="margin-top:3px">📍 ${s.addr}</div>`:''}
-        ${s.notes?`<div style="font-size:15px;color:#f97316;font-style:italic;margin-top:6px;line-height:1.5;font-weight:500;user-select:text">${s.notes.replace(/</g,'&lt;')}</div>`:''}
+        ${s.notes?`<div style="font-size:13px;color:#f97316;margin-top:6px;line-height:1.5;font-weight:700;user-select:text;word-break:break-word">${s.notes.replace(/</g,'&lt;')}</div>`:''}
         ${leg?`<div style="font-size:11px;color:var(--gr);margin-top:4px;font-weight:600">→ Next stop: ${leg.min} min · ${leg.mi} mi</div>`:''}
       </div>
     </div>`;
@@ -2556,7 +3142,7 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
 
 // Write this session's presence to the sheet
 async function writeHeartbeat() {
-  if (!curUser || !gAccessToken) return;
+  if (!curUser || !authToken) return;
   const ts = Date.now();
   const info = SESSION_INFO || {};
   // Full session record stored as JSON
