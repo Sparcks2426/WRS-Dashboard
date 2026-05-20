@@ -627,7 +627,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <div style="width:42px;height:42px;border-radius:12px;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:20px">🚨</div>
       <div style="flex:1">
         <h3 style="font-size:18px;margin:0;color:var(--tx);font-weight:700">On Call Rotation</h3>
-        <div style="font-size:12px;color:var(--dm2);margin-top:2px">Weekend coverage · Louis → Christian → Geni → Jeff → Mijail → Alex · Repeats every 6 weeks</div>
+        <div style="font-size:12px;color:var(--dm2);margin-top:2px">Weekend coverage · Alex → Christian → Geni → Jeff → Mijail → Louis · Repeats every 6 weeks</div>
       </div>
       <button onclick="closeOncall()" style="background:none;border:none;color:var(--dm2);font-size:24px;cursor:pointer;padding:4px 10px">✕</button>
     </div>
@@ -2192,8 +2192,8 @@ async function deleteAnnouncement(id) {
 // Each tech is on call for Sat + Sun of one week.
 // The rotation is computed from the anchor — nothing is stored.
 
-const ONCALL_TECHS = ['Louis','Christian','Geni','Jeff','Mijail','Alex'];
-const ONCALL_ANCHOR = new Date(2026, 2, 21); // Sat Mar 21, 2026 = Louis (week 0)
+const ONCALL_TECHS = ['Alex','Christian','Geni','Jeff','Mijail','Louis'];
+const ONCALL_ANCHOR = new Date(2026, 2, 21); // Sat Mar 21, 2026 = Alex (week 0)
 
 let oncallAnchor = null; // first Saturday of the displayed range
 let oncallMode = 'six';  // 'six' (default) or 'year'
