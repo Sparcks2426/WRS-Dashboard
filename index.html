@@ -497,6 +497,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
         <h3 style="font-size:18px;margin:0;color:var(--tx);font-weight:700">Installation Calendar</h3>
         <div style="font-size:12px;color:var(--dm2);margin-top:2px">Pre-scheduled installations · Manual promotion to Jeff's column</div>
       </div>
+      <button id="calAddBtn" onclick="openInstallAdd()" style="display:none;background:#8b5cf6;border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:12px;font-weight:700;padding:8px 14px;cursor:pointer;white-space:nowrap">+ Add Installation</button>
       <button onclick="closeCalendar()" style="background:none;border:none;color:var(--dm2);font-size:24px;cursor:pointer;padding:4px 10px;border-radius:var(--r8);transition:background .15s" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='none'">✕</button>
     </div>
 
@@ -536,11 +537,13 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       </div>
     </div>
 
-    <!-- Existing installs for this day -->
+    <!-- Existing installs for this day (only visible in day-click mode) -->
     <div id="installDayList" style="margin-bottom:16px"></div>
 
-    <!-- Add new install form -->
+    <!-- Add/Edit install form -->
     <div id="installDayForm">
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Date</div>
+      <input id="installDateInput" type="date" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;margin-bottom:10px;box-sizing:border-box;color-scheme:dark">
       <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Job Name</div>
       <input id="installNameInput" type="text" placeholder="e.g. Whole Foods 10529 - Compactor Install" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;margin-bottom:10px;box-sizing:border-box">
       <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Address</div>
@@ -549,9 +552,17 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <textarea id="installNotesInput" placeholder="Parts needed, customer contact, special instructions..." style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;resize:vertical;outline:none;min-height:72px;line-height:1.5;box-sizing:border-box"></textarea>
     </div>
 
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
-      <button onclick="closeInstallDay()" style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);color:var(--tx);padding:9px 18px;cursor:pointer;font-size:13px;font-weight:600">Close</button>
-      <button id="installAddBtn" onclick="submitInstall()" style="background:#8b5cf6;border:none;border-radius:var(--r8);color:#fff;padding:9px 22px;cursor:pointer;font-size:13px;font-weight:700">Add Install</button>
+    <div style="display:flex;gap:10px;justify-content:space-between;margin-top:16px;flex-wrap:wrap">
+      <!-- Left: edit-mode actions (Promote, Delete) -->
+      <div id="installEditActions" style="display:none;gap:8px">
+        <button id="installPromoteBtn" onclick="promoteFromEdit()" style="background:#10b981;border:none;border-radius:var(--r8);color:#fff;padding:9px 16px;cursor:pointer;font-size:13px;font-weight:700">→ Promote</button>
+        <button id="installDeleteBtn" onclick="deleteFromEdit()" style="background:transparent;border:1px solid var(--rd);border-radius:var(--r8);color:var(--rd);padding:9px 16px;cursor:pointer;font-size:13px;font-weight:700">Delete</button>
+      </div>
+      <!-- Right: Cancel + Add/Update -->
+      <div style="display:flex;gap:10px;margin-left:auto">
+        <button onclick="closeInstallDay()" style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);color:var(--tx);padding:9px 18px;cursor:pointer;font-size:13px;font-weight:600">Cancel</button>
+        <button id="installAddBtn" onclick="submitInstall()" style="background:#8b5cf6;border:none;border-radius:var(--r8);color:#fff;padding:9px 22px;cursor:pointer;font-size:13px;font-weight:700">Add Install</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2425,6 +2436,10 @@ function startOfWeek(d) {
 async function openCalendar() {
   if (!calendarAnchor) calendarAnchor = new Date();
   document.getElementById('calendarBg').style.display = 'flex';
+  // Show "+ Add Installation" button for admins/write users
+  const isAdmin = curUser && (curUser.role === 'admin' || curUser.role === 'write');
+  const addBtn = document.getElementById('calAddBtn');
+  if (addBtn) addBtn.style.display = isAdmin ? 'inline-block' : 'none';
   await loadCalendarData();
   renderCalendar();
 }
@@ -2506,7 +2521,7 @@ function renderCalendarWeek() {
     const isToday = (dateStr === todayStr);
     const isPast = (dateStr < todayStr);
     const clickable = true;
-    html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:200px;padding:10px;cursor:${clickable?'pointer':'default'};${isPast?'opacity:.55;':''}transition:background .12s">
+    html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:200px;min-width:0;padding:10px;cursor:${clickable?'pointer':'default'};${isPast?'opacity:.55;':''}transition:background .12s;overflow:hidden">
       <div style="font-size:13px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':'var(--tx)'};margin-bottom:6px">${d.getDate()}</div>`;
     installs.forEach(install => {
       html += `<div style="background:#8b5cf6;color:#fff;font-size:11px;font-weight:700;padding:5px 7px;border-radius:5px;margin-bottom:5px;line-height:1.3;word-break:break-word" title="${install.name.replace(/"/g,'&quot;')}">${install.name}${install.notes?`<div style='font-weight:500;font-size:10px;margin-top:3px;opacity:.92;line-height:1.35'>${install.notes.replace(/</g,'&lt;').slice(0,80)}${install.notes.length>80?'…':''}</div>`:''}</div>`;
@@ -2542,7 +2557,7 @@ function renderCalendarMonth() {
       const isPast = (dateStr < todayStr);
       const outOfMonth = (d.getMonth() !== month);
       const clickable = true;
-      html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:90px;padding:6px 7px;cursor:${clickable?'pointer':'default'};${outOfMonth?'opacity:.35;':''}${isPast && !outOfMonth?'opacity:.55;':''}transition:background .12s">
+      html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:90px;min-width:0;padding:6px 7px;cursor:${clickable?'pointer':'default'};${outOfMonth?'opacity:.35;':''}${isPast && !outOfMonth?'opacity:.55;':''}transition:background .12s;overflow:hidden">
         <div style="font-size:12px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':outOfMonth?'var(--dm2)':'var(--tx)'};margin-bottom:3px">${d.getDate()}</div>`;
       installs.forEach(install => {
         html += `<div style="background:#8b5cf6;color:#fff;font-size:10px;font-weight:700;padding:3px 5px;border-radius:4px;margin-bottom:3px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${install.name.replace(/"/g,'&quot;')}">${install.name}</div>`;
@@ -2556,17 +2571,27 @@ function renderCalendarMonth() {
   document.getElementById('calGrid').innerHTML = html;
 }
 
+// Install popup state — one of: 'view' (read-only), 'add' (admin creating), 'edit' (admin modifying)
+let installPopupMode = 'view';
+// Set during 'edit' mode so the submit/promote/delete handlers know what to act on
+let installEditOldDate = null;
+let installEditOldSlot = null;
+
 function openInstallDay(dateStr) {
+  // Called when a calendar day cell is clicked.
+  // - For non-admins: view-only list of installs for this day
+  // - For admins: same list + ability to click chips for edit, or add new
   if (!curUser) return;
   const isAdmin = (curUser.role === 'admin' || curUser.role === 'write');
   installDayDate = dateStr;
-  // Format date nicely for display
+  installEditOldDate = null;
+  installEditOldSlot = null;
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(y, m-1, d);
   const dayLabel = dt.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' });
-  const dayOfWeek = dt.getDay(); // 0=Sun, 6=Sat
+  const dayOfWeek = dt.getDay();
   const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-  document.getElementById('installDayTitle').textContent = 'Installation';
+  document.getElementById('installDayTitle').textContent = isAdmin && !isWeekend ? 'Schedule Installation' : 'Installation';
   document.getElementById('installDaySubtitle').textContent = dayLabel + (isWeekend ? ' · Weekend (no installs allowed)' : '');
 
   // List existing installs for this day
@@ -2575,33 +2600,39 @@ function openInstallDay(dateStr) {
   if (installs.length === 0) {
     listEl.innerHTML = isAdmin ? '' : '<div style="text-align:center;padding:14px;color:var(--dm2);font-size:12px;font-style:italic">No installs scheduled for this day.</div>';
   } else {
-    listEl.innerHTML = installs.map(ins => `
-      <div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:10px 12px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px;word-break:break-word">${ins.name.replace(/</g,'&lt;')}</div>
-            ${ins.address?`<div style="font-size:11px;color:var(--dm2);margin-bottom:3px;word-break:break-word">📍 ${ins.address.replace(/</g,'&lt;')}</div>`:''}
-            ${ins.notes?`<div style="font-size:11px;color:#f97316;font-weight:600;line-height:1.4;word-break:break-word">${ins.notes.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`:''}
+    // Admins: clickable chips that enter edit mode. Non-admins: just text.
+    listEl.innerHTML = installs.map((ins, idx) => `
+      <div ${isAdmin?`onclick="enterEditMode('${ins.date}', ${ins.slot})" style="cursor:pointer"`:''}>
+        <div style="background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r8);padding:10px 12px;margin-bottom:8px;transition:background .12s" ${isAdmin?'onmouseover="this.style.background=\'rgba(139,92,246,.08)\'" onmouseout="this.style.background=\'var(--sf2)\'"':''}>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px;word-break:break-word">${ins.name.replace(/</g,'&lt;')}</div>
+              ${ins.address?`<div style="font-size:11px;color:var(--dm2);margin-bottom:3px;word-break:break-word">📍 ${ins.address.replace(/</g,'&lt;')}</div>`:''}
+              ${ins.notes?`<div style="font-size:11px;color:#f97316;font-weight:600;line-height:1.4;word-break:break-word">${ins.notes.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`:''}
+            </div>
+            ${isAdmin?'<div style="font-size:10px;color:var(--dm2);flex-shrink:0">✎ Edit</div>':''}
           </div>
-          ${isAdmin ? `<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
-            <button onclick="promoteInstall('${ins.date}', ${ins.slot})" style="background:#10b981;border:none;border-radius:6px;color:#fff;padding:5px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap" title="Move this install to Jeff's column now">→ Promote</button>
-            <button onclick="deleteInstall('${ins.date}', ${ins.slot})" style="background:transparent;border:1px solid var(--rd);border-radius:6px;color:var(--rd);padding:5px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap">Delete</button>
-          </div>`:''}
         </div>
       </div>
     `).join('');
   }
 
-  // Hide add-form + button entirely for read-only users OR weekends
+  // Decide what to show for the form
   const formEl = document.getElementById('installDayForm');
   const addBtn = document.getElementById('installAddBtn');
+  const editActions = document.getElementById('installEditActions');
+  editActions.style.display = 'none';
+
   if (!isAdmin || isWeekend) {
+    // View-only or weekend → hide form entirely
+    installPopupMode = 'view';
     formEl.style.display = 'none';
     addBtn.style.display = 'none';
   } else {
+    // Admin viewing a weekday — show ADD form
+    installPopupMode = 'add';
     formEl.style.display = '';
     addBtn.style.display = '';
-    // Show/hide add form depending on capacity
     if (installs.length >= 2) {
       formEl.style.opacity = '.4';
       formEl.style.pointerEvents = 'none';
@@ -2617,41 +2648,143 @@ function openInstallDay(dateStr) {
       addBtn.style.cursor = 'pointer';
       addBtn.textContent = 'Add Install';
     }
-    // Clear input fields
+    // Clear input fields, pre-fill date with the clicked day
     document.getElementById('installNameInput').value = '';
     document.getElementById('installAddrInput').value = '';
     document.getElementById('installNotesInput').value = '';
+    document.getElementById('installDateInput').value = dateStr;
   }
 
   document.getElementById('installDayBg').style.display = 'flex';
 }
 
+// Opens the install popup in ADD mode with no preset date (date picker required).
+function openInstallAdd() {
+  if (!curUser || !(curUser.role === 'admin' || curUser.role === 'write')) return;
+  installPopupMode = 'add';
+  installDayDate = null;
+  installEditOldDate = null;
+  installEditOldSlot = null;
+  document.getElementById('installDayTitle').textContent = 'Schedule Installation';
+  document.getElementById('installDaySubtitle').textContent = 'Pick a date and fill in the details';
+  // No existing-installs list in this mode
+  document.getElementById('installDayList').innerHTML = '';
+  // Show form, hide edit actions
+  document.getElementById('installEditActions').style.display = 'none';
+  const formEl = document.getElementById('installDayForm');
+  const addBtn = document.getElementById('installAddBtn');
+  formEl.style.display = '';
+  formEl.style.opacity = '1';
+  formEl.style.pointerEvents = 'auto';
+  addBtn.style.display = '';
+  addBtn.disabled = false;
+  addBtn.style.opacity = '1';
+  addBtn.style.cursor = 'pointer';
+  addBtn.textContent = 'Add Install';
+  // Clear all fields; date defaults to today
+  document.getElementById('installNameInput').value = '';
+  document.getElementById('installAddrInput').value = '';
+  document.getElementById('installNotesInput').value = '';
+  document.getElementById('installDateInput').value = fmtDate(new Date());
+  document.getElementById('installDayBg').style.display = 'flex';
+}
+
+// Switch the popup to EDIT mode for an existing install
+function enterEditMode(date, slot) {
+  if (!curUser || !(curUser.role === 'admin' || curUser.role === 'write')) return;
+  const ins = calendarInstalls.find(i => i.date === date && i.slot === slot);
+  if (!ins) return;
+  installPopupMode = 'edit';
+  installDayDate = date;
+  installEditOldDate = date;
+  installEditOldSlot = slot;
+  document.getElementById('installDayTitle').textContent = 'Edit Installation';
+  document.getElementById('installDaySubtitle').textContent = 'Change date or details · Promote moves it to Jeff\'s column';
+  document.getElementById('installDayList').innerHTML = '';
+  // Show form + edit actions (Promote, Delete)
+  const formEl = document.getElementById('installDayForm');
+  const addBtn = document.getElementById('installAddBtn');
+  const editActions = document.getElementById('installEditActions');
+  formEl.style.display = '';
+  formEl.style.opacity = '1';
+  formEl.style.pointerEvents = 'auto';
+  addBtn.style.display = '';
+  addBtn.disabled = false;
+  addBtn.style.opacity = '1';
+  addBtn.style.cursor = 'pointer';
+  addBtn.textContent = 'Update Install';
+  editActions.style.display = 'flex';
+  // Pre-fill all fields with current values
+  document.getElementById('installNameInput').value = ins.name || '';
+  document.getElementById('installAddrInput').value = ins.address || '';
+  document.getElementById('installNotesInput').value = ins.notes || '';
+  document.getElementById('installDateInput').value = date;
+}
+
 function closeInstallDay() {
   document.getElementById('installDayBg').style.display = 'none';
-  installDayDate = null;
+  installPopupMode = 'view';
+  installEditOldDate = null;
+  installEditOldSlot = null;
 }
 
 async function submitInstall() {
-  if (!installDayDate) return;
   const name  = document.getElementById('installNameInput').value.trim();
   const addr  = document.getElementById('installAddrInput').value.trim();
   const notes = document.getElementById('installNotesInput').value.trim();
-  if (!name) {
-    toast('Job name is required');
-    return;
-  }
+  const date  = document.getElementById('installDateInput').value;
+  if (!date) { toast('Date is required'); return; }
+  if (!name) { toast('Job name is required'); return; }
+  // Block weekend dates (Sat=6, Sun=0)
+  const [yy, mm, dd] = date.split('-').map(Number);
+  const dow = new Date(yy, mm-1, dd).getDay();
+  if (dow === 0 || dow === 6) { toast('Weekends are not allowed for installs'); return; }
+
   try {
-    const res = await apiCall('/addInstall', { date: installDayDate, name, address: addr, notes });
+    let res;
+    if (installPopupMode === 'edit') {
+      res = await apiCall('/updateInstall', {
+        oldDate: installEditOldDate,
+        oldSlot: installEditOldSlot,
+        date, name, address: addr, notes,
+      });
+    } else {
+      res = await apiCall('/addInstall', { date, name, address: addr, notes });
+    }
     if (!res.success) {
-      toast(res.error || 'Failed to add install');
+      toast(res.error || 'Failed to save');
       return;
     }
-    toast('Install scheduled');
+    toast(installPopupMode === 'edit' ? 'Install updated' : 'Install scheduled');
     closeInstallDay();
     await loadCalendarData();
     renderCalendar();
   } catch (e) {
-    toast('Failed to add install');
+    toast('Failed to save install');
+    console.error(e);
+  }
+}
+
+// Promote from inside edit mode (uses the install we were editing)
+async function promoteFromEdit() {
+  if (!installEditOldDate || installEditOldSlot === null) return;
+  await promoteInstall(installEditOldDate, installEditOldSlot);
+  closeInstallDay();
+}
+
+// Delete from inside edit mode
+async function deleteFromEdit() {
+  if (!installEditOldDate || installEditOldSlot === null) return;
+  if (!confirm('Delete this scheduled install?')) return;
+  try {
+    const res = await apiCall('/deleteInstall', { date: installEditOldDate, slot: installEditOldSlot });
+    if (!res.success) { toast(res.error || 'Failed to delete'); return; }
+    toast('Install deleted');
+    closeInstallDay();
+    await loadCalendarData();
+    renderCalendar();
+  } catch (e) {
+    toast('Failed to delete install');
     console.error(e);
   }
 }
