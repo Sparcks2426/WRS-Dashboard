@@ -720,7 +720,7 @@ const JOB_ROW_START = 6, JOB_ROW_END = 18;  // rows 6–18
 const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23
 
 // ── Status maps ──
-const SL  = { green:"Today's Tickets", orange:"Follow Up", yellow:"Quote Needed", blue:"Parts Needed", inst:"Installation", pink:"JP Review", john:"John Follow Up", close:"Close Out", none:"Untagged" };
+const SL  = { green:"Today's Tickets", orange:"Follow Up", yellow:"Quote Needed", blue:"Parts Needed", inst:"Installation", pink:"JP Review", john:"John Follow Up", close:"Close Out", none:"Untagged", que:"➜ Move to QUE" };
 const SO  = ['green','orange','yellow','blue','inst'];
 const CS  = {
   green: { f:'#10b981', b:'rgba(16,185,129,.1)',  s:'#059669' },
@@ -732,6 +732,7 @@ const CS  = {
   john:  { f:'#06b6d4', b:'rgba(6,182,212,.1)',   s:'#0891b2' },
   close: { f:'#dc2626', b:'rgba(220,38,38,.1)',   s:'#b91c1c' },
   none:  { f:'#5a6a8a', b:'rgba(90,106,138,.08)', s:'#374151' },
+  que:   { f:'#a855f7', b:'rgba(168,85,247,.1)',  s:'#9333ea' },
 };
 const HEX_TO_STATUS = {
   '#00ff00':'green','#00FF00':'green',
@@ -1600,12 +1601,13 @@ function openDD(id, el) {
   const r = el.getBoundingClientRect();
   let l = r.right-170, t = r.bottom+6;
   if (l<6) l=6; if (t+260>window.innerHeight) t=Math.max(6,r.top-260);
-  // Dropdown choices: Close Out / Installation / Untagged removed per Jon-Pol.
-  // Existing tickets with those statuses still work — they just can't be
-  // manually set from the UI anymore. 'none' is still the default for blank cells.
-  document.getElementById('ddp').innerHTML = ['green','orange','yellow','blue','pink','john'].map(c=>{
-    const s=c===j.color;
-    return `<div class="ddi${s?' sel':''}" style="${s?'background:'+CS[c].s:''}" onclick="chgColor(${id},'${c}')"><span class="ddd" style="background:${CS[c].f}"></span>${SL[c]}</div>`;
+  // Dropdown choices: 'blue' (Parts Needed) replaced with 'que' (move to QUE column).
+  // Selecting 'que' moves the ticket to the QUE column instead of changing its color.
+  // Close Out / Installation / Untagged also removed per Jon-Pol — existing tickets
+  // with those statuses still work, just can't be manually set from the UI anymore.
+  document.getElementById('ddp').innerHTML = ['green','orange','yellow','que','pink','john'].map(c=>{
+    const s = (c==='que') ? false : (c===j.color);
+    return `<div class="ddi${s?' sel':''}" style="${s?'background:'+CS[c].s:''}" onclick="${c==='que'?`moveToQue(${id})`:`chgColor(${id},'${c}')`}"><span class="ddd" style="background:${CS[c].f}"></span>${SL[c]}</div>`;
   }).join('');
   document.getElementById('ddp').style.cssText=`display:block;top:${t}px;left:${l}px`;
   document.getElementById('ddo').style.display='block';
@@ -1696,6 +1698,48 @@ function chgColor(id, nc) {
   sheetsSetBackground(j.row, j.col, STATUS_TO_HEX[nc]||'#ffffff')
     .catch(()=>toast('Save failed'))
     .finally(() => { isSaving = false; });
+}
+
+// Move a ticket to the QUE column (col 11). Finds the next empty row in QUE,
+// writes the ticket value+color there, then clears the original cell.
+// 'QUE' isn't a real status — the moved ticket stays green in its new home.
+async function moveToQue(id) {
+  const j = jobs.find(x=>x.id===id); if (!j) return;
+  closeDD();
+  if (j.col === 11) { toast('Already in QUE'); return; }
+
+  // Find next empty row in QUE column (col 11, rows 6-18)
+  const queJobs = jobs.filter(x => x.col === 11).map(x => x.row);
+  let targetRow = null;
+  for (let r = 6; r <= 18; r++) {
+    if (!queJobs.includes(r)) { targetRow = r; break; }
+  }
+  if (targetRow === null) { toast('QUE column is full (max 13)'); return; }
+
+  // Build the cell value: name, address, optional ||NOTE:
+  const base = j.address ? `${j.job}, ${j.address}` : j.job;
+  const cellVal = j.notes ? `${base} ||NOTE:${j.notes}` : base;
+  const srcRow = j.row, srcCol = j.col;
+
+  // Optimistic: move in memory + render immediately for snappy UX
+  j.row = targetRow; j.col = 11; j.tech = 'QUE'; j.color = 'green';
+  render(); updateMap();
+
+  isSaving = true;
+  try {
+    // Write new cell value + green background
+    await sheetsSetValue(targetRow, 11, cellVal);
+    await sheetsSetBackground(targetRow, 11, '#00ff00');
+    // Clear original
+    await sheetsClear(srcRow, srcCol);
+    toast(`Moved to QUE`);
+  } catch (e) {
+    toast('Move failed — refreshing');
+    console.error(e);
+  } finally {
+    isSaving = false;
+    loadData();
+  }
 }
 
 // ── Search ──
@@ -2877,7 +2921,19 @@ function bindDrag() {
         [sJob.lng,tJob.lng]=[tJob.lng,sJob.lng];
         [sJob.notes,tJob.notes]=[tJob.notes,sJob.notes];
         render(); updateMap();
-        swapRows(sr, parseInt(ds.dataset.col), tr).catch(()=>toast('Reorder failed'));
+        // Guard auto-refresh until the swap fully persists to the sheet,
+        // otherwise loadData can race ahead, read pre-swap values, and
+        // revert the reorder in memory. After writes complete (success or
+        // failure), reconcile from the sheet so any stale in-memory state
+        // is cleared.
+        isSaving = true;
+        swapRows(sr, parseInt(ds.dataset.col), tr)
+          .catch(()=>toast('Reorder failed'))
+          .finally(()=>{
+            isSaving = false;
+            // Reconcile in-memory state with what's actually in the sheet
+            loadData();
+          });
       } else {
         // Cross-column: move job to target tech's column
         const oldRow = sJob.row, oldCol = sJob.col;
