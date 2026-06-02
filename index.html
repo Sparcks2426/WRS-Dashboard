@@ -1,4 +1,4 @@
-v<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -211,6 +211,10 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .tv-tickets{display:flex;flex-direction:column;gap:8px;padding:0 0 20px}
 .tv-card{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r12);padding:14px 16px;display:flex;align-items:flex-start;gap:12px;transition:border-color .15s}
 .tv-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0}
+/* Co-tech badges — names of other techs working the same site that day */
+.cotech-row{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}
+.cotech-ico{font-size:12px;opacity:.9;line-height:1}
+.cotech{display:inline-flex;align-items:center;font-size:11px;font-weight:800;padding:2px 9px;border-radius:11px;line-height:1.5;letter-spacing:.2px}
 .tv-job{font-size:13px;font-weight:700;color:var(--tx);line-height:1.3;word-break:break-word;user-select:text;cursor:text}
 .tv-addr{font-size:10px;color:var(--dm2);margin-top:4px;line-height:1.4;user-select:text;cursor:text}
 .tv-show-all{display:block;width:100%;padding:14px;background:var(--ac);border:none;border-radius:var(--r12);color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:1px;text-transform:uppercase;margin-bottom:20px;transition:background .15s}
@@ -3415,6 +3419,41 @@ async function renderTechView(withMap=true) {
   }
 }
 
+// Pick black or white text for readability on a given hex background.
+function textOnColor(hex) {
+  const c = (hex || '').replace('#', '');
+  if (c.length < 6) return '#fff';
+  const r = parseInt(c.substr(0,2),16), g = parseInt(c.substr(2,2),16), b = parseInt(c.substr(4,2),16);
+  // Perceived luminance — bright colors (e.g. Landi's yellow) get dark text.
+  return (0.299*r + 0.587*g + 0.114*b) / 255 > 0.6 ? '#000' : '#fff';
+}
+
+// Find other techs scheduled at the SAME site as `job` today.
+// "Same site" = matching address OR matching job name (normalized). Shop
+// check-ins and the QUE holding column are excluded so they don't false-team.
+function getCoTechs(job) {
+  if (!job) return [];
+  const SHOP = new Set(Object.keys(SHOP_LOCATIONS));
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const myA = norm(job.address), myN = norm(job.job);
+  const seen = new Set(), out = [];
+  jobs.forEach(o => {
+    if (o.id === job.id) return;
+    if (o.tech === job.tech) return;            // same person
+    if (o.color !== 'green') return;            // only active tickets
+    if (o.tech === 'QUE' || o.col === 11) return; // QUE isn't a person
+    if (SHOP.has(o.job)) return;                // shop check-ins aren't a shared site
+    const oA = norm(o.address), oN = norm(o.job);
+    const addrMatch = myA && oA && myA === oA;
+    const nameMatch = myN && oN && myN.length >= 3 && myN === oN;
+    if ((addrMatch || nameMatch) && !seen.has(o.tech)) {
+      seen.add(o.tech);
+      out.push(o.tech);
+    }
+  });
+  return out.sort((a, b) => TECHS.indexOf(a) - TECHS.indexOf(b));
+}
+
 function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
   const tvTickets = document.getElementById('tvTickets');
   let h = '';
@@ -3429,10 +3468,18 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
   allStops.forEach((s,i)=>{
     // legsById is keyed by allStops index — leg[i] = time from stop i to next geocoded stop
     const leg = legsById ? legsById[i] : null;
+    // Other techs on the same site today → small colored name badges in the header
+    const coTechs = s.isShop ? [] : getCoTechs(s.jobRef);
+    const coBadges = coTechs.length
+      ? `<div class="cotech-row"><span class="cotech-ico" title="Also on this site today">👥</span>${
+          coTechs.map(t => { const col = TC[t] || '#888'; return `<span class="cotech" style="background:${col};color:${textOnColor(col)}">${t}</span>`; }).join('')
+        }</div>`
+      : '';
     h+=`<div class="tv-card" style="${s.isShop?'border-left:3px solid '+tc+';background:rgba(255,255,255,.03)':''}">
       <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'};flex-shrink:0">${s.label}</div>
       <div style="flex:1;min-width:0;user-select:text">
         <div class="tv-job">${s.name}</div>
+        ${coBadges}
         ${s.addr?`<div class="tv-addr" style="margin-top:3px">📍 ${s.addr}</div>`:''}
         ${s.notes?`<div style="font-size:13px;color:#f97316;margin-top:6px;line-height:1.5;font-weight:700;user-select:text;word-break:break-word">${s.notes.replace(/</g,'&lt;')}</div>`:''}
         ${leg?`<div style="font-size:11px;color:var(--gr);margin-top:4px;font-weight:600">→ Next stop: ${leg.min} min · ${leg.mi} mi</div>`:''}
