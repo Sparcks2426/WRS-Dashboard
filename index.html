@@ -495,7 +495,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <div style="width:42px;height:42px;border-radius:12px;background:rgba(139,92,246,.18);border:1px solid rgba(139,92,246,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:22px">📅</div>
       <div style="flex:1">
         <h3 style="font-size:18px;margin:0;color:var(--tx);font-weight:700">Installation Calendar</h3>
-        <div style="font-size:12px;color:var(--dm2);margin-top:2px">Pre-scheduled installations · Manual promotion to Jeff's column</div>
+        <div style="font-size:12px;color:var(--dm2);margin-top:2px">Pre-scheduled installations · Promotes to Landi or Jeff by color</div>
       </div>
       <button id="calAddBtn" onclick="openInstallAdd()" style="display:none;background:#8b5cf6;border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:12px;font-weight:700;padding:8px 14px;cursor:pointer;white-space:nowrap">+ Add Installation</button>
       <button onclick="closeCalendar()" style="background:none;border:none;color:var(--dm2);font-size:24px;cursor:pointer;padding:4px 10px;border-radius:var(--r8);transition:background .15s" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='none'">✕</button>
@@ -550,6 +550,12 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <input id="installAddrInput" type="text" placeholder="e.g. 21105 St Andrews Blvd, Boca Raton, FL 33486" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;margin-bottom:10px;box-sizing:border-box">
       <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Notes <span style="font-weight:500;color:var(--dm);text-transform:none;letter-spacing:0">(optional)</span></div>
       <textarea id="installNotesInput" placeholder="Parts needed, customer contact, special instructions..." style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;resize:vertical;outline:none;min-height:72px;line-height:1.5;box-sizing:border-box"></textarea>
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin:10px 0 6px">Assigned To</div>
+      <div id="installAssigneeRow" style="display:flex;gap:8px">
+        <button type="button" data-assignee="" onclick="setInstallAssignee('')" style="flex:1;border:1px solid var(--bd);border-radius:var(--r8);padding:9px 8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;background:var(--sf2);color:var(--tx)">Unassigned</button>
+        <button type="button" data-assignee="Jeff" onclick="setInstallAssignee('Jeff')" style="flex:1;border:1px solid var(--bd);border-radius:var(--r8);padding:9px 8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;background:var(--sf2);color:var(--tx)">Jeff</button>
+        <button type="button" data-assignee="Landi" onclick="setInstallAssignee('Landi')" style="flex:1;border:1px solid var(--bd);border-radius:var(--r8);padding:9px 8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;background:var(--sf2);color:var(--tx)">Landi</button>
+      </div>
     </div>
 
     <div style="display:flex;gap:10px;justify-content:space-between;margin-top:16px;flex-wrap:wrap">
@@ -1440,15 +1446,24 @@ function rSpecialCols() {
     { key:'yellow', label:'Quote Needed',   color:'#eab308' },
   ];
   let h = '';
+  // When a search is active, the special columns honor it too — so searching
+  // can surface tickets parked in JP Review, John Follow Up, Follow Up, or
+  // Quote Needed (matching job name, tech, or address — same as the board).
+  const s = search ? search.toLowerCase() : '';
   SCOLS.forEach(sc => {
-    const sj = jobs.filter(j=>j.color===sc.key);
+    let sj = jobs.filter(j=>j.color===sc.key);
+    if (s) sj = sj.filter(j =>
+      j.job.toLowerCase().includes(s) ||
+      j.tech.toLowerCase().includes(s) ||
+      (j.address||'').toLowerCase().includes(s)
+    );
     h += `<div class="spcol" style="border-color:${sc.color}30">
       <div class="thdr" style="background:${sc.color}12">
         <span class="tn" style="color:${sc.color}">${sc.label}</span>
         <span class="tcnt">${sj.length}</span>
       </div>
       <div class="tjobs" data-spkey="${sc.key}">`;
-    if (!sj.length) h += `<div style="text-align:center;padding:14px;color:var(--dm);font-size:10px">NONE</div>`;
+    if (!sj.length) h += `<div style="text-align:center;padding:14px;color:var(--dm);font-size:10px">${s?'NO MATCH':'NONE'}</div>`;
     else sj.forEach(j => {
       const tc = TC[j.tech]||'#888';
       h += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${sc.color};background:${sc.color}10;cursor:default">
@@ -2568,7 +2583,10 @@ function renderCalendarWeek() {
     html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:200px;min-width:0;padding:10px;cursor:${clickable?'pointer':'default'};${isPast?'opacity:.55;':''}transition:background .12s;overflow:hidden">
       <div style="font-size:13px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':'var(--tx)'};margin-bottom:6px">${d.getDate()}</div>`;
     installs.forEach(install => {
-      html += `<div style="background:#8b5cf6;color:#fff;font-size:11px;font-weight:700;padding:5px 7px;border-radius:5px;margin-bottom:5px;line-height:1.3;word-break:break-word" title="${install.name.replace(/"/g,'&quot;')}">${install.name}${install.notes?`<div style='font-weight:500;font-size:10px;margin-top:3px;opacity:.92;line-height:1.35'>${install.notes.replace(/</g,'&lt;').slice(0,80)}${install.notes.length>80?'…':''}</div>`:''}</div>`;
+      const bg = installColor(install.tech);
+      const fg = installTextColor(install.tech);
+      const who = install.tech ? `<div style='font-weight:800;font-size:9px;letter-spacing:.5px;text-transform:uppercase;opacity:.95;margin-bottom:2px'>${install.tech}</div>` : '';
+      html += `<div style="background:${bg};color:${fg};font-size:11px;font-weight:700;padding:5px 7px;border-radius:5px;margin-bottom:5px;line-height:1.3;word-break:break-word" title="${install.name.replace(/"/g,'&quot;')}">${who}${install.name}${install.notes?`<div style='font-weight:500;font-size:10px;margin-top:3px;opacity:.92;line-height:1.35'>${install.notes.replace(/</g,'&lt;').slice(0,80)}${install.notes.length>80?'…':''}</div>`:''}</div>`;
     });
     html += `</div>`;
   }
@@ -2604,7 +2622,9 @@ function renderCalendarMonth() {
       html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:90px;min-width:0;padding:6px 7px;cursor:${clickable?'pointer':'default'};${outOfMonth?'opacity:.35;':''}${isPast && !outOfMonth?'opacity:.55;':''}transition:background .12s;overflow:hidden">
         <div style="font-size:12px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':outOfMonth?'var(--dm2)':'var(--tx)'};margin-bottom:3px">${d.getDate()}</div>`;
       installs.forEach(install => {
-        html += `<div style="background:#8b5cf6;color:#fff;font-size:10px;font-weight:700;padding:3px 5px;border-radius:4px;margin-bottom:3px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${install.name.replace(/"/g,'&quot;')}">${install.name}</div>`;
+        const bg = installColor(install.tech);
+        const fg = installTextColor(install.tech);
+        html += `<div style="background:${bg};color:${fg};font-size:10px;font-weight:700;padding:3px 5px;border-radius:4px;margin-bottom:3px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(install.tech?install.tech+': ':'')+install.name.replace(/"/g,'&quot;')}">${install.name}</div>`;
       });
       html += `</div>`;
       d.setDate(d.getDate() + 1);
@@ -2620,6 +2640,36 @@ let installPopupMode = 'view';
 // Set during 'edit' mode so the submit/promote/delete handlers know what to act on
 let installEditOldDate = null;
 let installEditOldSlot = null;
+// Currently-selected install assignee: '' (unassigned), 'Jeff', or 'Landi'
+let installAssignee = '';
+
+// Color for an assigned install. Reuses the board's tech colors:
+// Jeff = red, Landi = yellow. Unassigned falls back to the purple install color.
+function installColor(tech) {
+  if (tech === 'Jeff')  return TC.Jeff  || '#FF1A1A';
+  if (tech === 'Landi') return TC.Landi || '#FFEA00';
+  return '#8b5cf6';
+}
+// Yellow needs dark text for readability; everything else uses white.
+function installTextColor(tech) { return tech === 'Landi' ? '#000' : '#fff'; }
+
+function setInstallAssignee(t) { installAssignee = t || ''; paintAssigneePicker(); }
+
+function paintAssigneePicker() {
+  document.querySelectorAll('#installAssigneeRow button').forEach(b => {
+    const v = b.dataset.assignee;
+    if (v === installAssignee) {
+      const col = installColor(v);
+      b.style.background  = col;
+      b.style.color       = installTextColor(v);
+      b.style.borderColor = col;
+    } else {
+      b.style.background  = 'var(--sf2)';
+      b.style.color       = 'var(--tx)';
+      b.style.borderColor = 'var(--bd)';
+    }
+  });
+}
 
 function openInstallDay(dateStr) {
   // Called when a calendar day cell is clicked.
@@ -2651,6 +2701,7 @@ function openInstallDay(dateStr) {
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
             <div style="flex:1;min-width:0">
               <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px;word-break:break-word">${ins.name.replace(/</g,'&lt;')}</div>
+              ${ins.tech?`<div style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:2px 8px;border-radius:10px;margin-bottom:4px;background:${installColor(ins.tech)};color:${installTextColor(ins.tech)}">${ins.tech}</div>`:''}
               ${ins.address?`<div style="font-size:11px;color:var(--dm2);margin-bottom:3px;word-break:break-word">📍 ${ins.address.replace(/</g,'&lt;')}</div>`:''}
               ${ins.notes?`<div style="font-size:11px;color:#f97316;font-weight:600;line-height:1.4;word-break:break-word">${ins.notes.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`:''}
             </div>
@@ -2697,6 +2748,7 @@ function openInstallDay(dateStr) {
     document.getElementById('installAddrInput').value = '';
     document.getElementById('installNotesInput').value = '';
     document.getElementById('installDateInput').value = dateStr;
+    installAssignee = ''; paintAssigneePicker();
   }
 
   document.getElementById('installDayBg').style.display = 'flex';
@@ -2730,6 +2782,7 @@ function openInstallAdd() {
   document.getElementById('installAddrInput').value = '';
   document.getElementById('installNotesInput').value = '';
   document.getElementById('installDateInput').value = fmtDate(new Date());
+  installAssignee = ''; paintAssigneePicker();
   document.getElementById('installDayBg').style.display = 'flex';
 }
 
@@ -2743,7 +2796,7 @@ function enterEditMode(date, slot) {
   installEditOldDate = date;
   installEditOldSlot = slot;
   document.getElementById('installDayTitle').textContent = 'Edit Installation';
-  document.getElementById('installDaySubtitle').textContent = 'Change date or details · Promote moves it to Jeff\'s column';
+  document.getElementById('installDaySubtitle').textContent = 'Change date or details · Promote routes by color (Landi → Landi, Jeff → Jeff)';
   document.getElementById('installDayList').innerHTML = '';
   // Show form + edit actions (Promote, Delete)
   const formEl = document.getElementById('installDayForm');
@@ -2763,6 +2816,7 @@ function enterEditMode(date, slot) {
   document.getElementById('installAddrInput').value = ins.address || '';
   document.getElementById('installNotesInput').value = ins.notes || '';
   document.getElementById('installDateInput').value = date;
+  installAssignee = ins.tech || ''; paintAssigneePicker();
 }
 
 function closeInstallDay() {
@@ -2790,10 +2844,10 @@ async function submitInstall() {
       res = await apiCall('/updateInstall', {
         oldDate: installEditOldDate,
         oldSlot: installEditOldSlot,
-        date, name, address: addr, notes,
+        date, name, address: addr, notes, tech: installAssignee,
       });
     } else {
-      res = await apiCall('/addInstall', { date, name, address: addr, notes });
+      res = await apiCall('/addInstall', { date, name, address: addr, notes, tech: installAssignee });
     }
     if (!res.success) {
       toast(res.error || 'Failed to save');
@@ -2852,13 +2906,32 @@ async function deleteInstall(date, slot) {
 }
 
 async function promoteInstall(date, slot) {
+  // Route by the install's assigned color:
+  //   Landi (yellow) → Landi's column
+  //   Jeff (red) or Unassigned → Jeff's column
+  // Uses /addJobAtTop to drop the ticket into the correct column, then removes
+  // the calendar install. (Replaces the old hardcoded-to-Jeff /promoteInstall.)
+  const ins = calendarInstalls.find(i => i.date === date && i.slot === slot);
+  if (!ins) { toast('Install not found'); return; }
+  const target = (ins.tech === 'Landi') ? 'Landi' : 'Jeff';
+  const jobInput = ins.address ? `${ins.name}, ${ins.address}` : ins.name;
   try {
-    const res = await apiCall('/promoteInstall', { date, slot });
-    if (!res.success) {
-      toast(res.error || 'Failed to promote');
+    const addRes = await apiCall('/addJobAtTop', { techName: target, jobInput, jobNote: ins.notes || '' });
+    if (!addRes.success) { toast(addRes.error || 'Failed to promote'); return; }
+    // Ticket created — now clear the calendar entry. If THIS fails we don't retry
+    // the add, to avoid creating a duplicate ticket.
+    try {
+      await apiCall('/deleteInstall', { date, slot });
+    } catch (delErr) {
+      console.error('Install delete after promote failed:', delErr);
+      toast(`Promoted to ${target} — but couldn't clear the calendar entry`);
+      closeInstallDay();
+      await loadCalendarData();
+      renderCalendar();
+      loadData();
       return;
     }
-    toast("Install moved to Jeff's column");
+    toast(`Install moved to ${target}'s column`);
     closeInstallDay();
     await loadCalendarData();
     renderCalendar();
