@@ -565,7 +565,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <input id="installAddrInput" type="text" placeholder="e.g. 21105 St Andrews Blvd, Boca Raton, FL 33486" style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;margin-bottom:10px;box-sizing:border-box">
       <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Notes <span style="font-weight:500;color:var(--dm);text-transform:none;letter-spacing:0">(optional)</span></div>
       <textarea id="installNotesInput" placeholder="Parts needed, customer contact, special instructions..." style="width:100%;background:var(--bg);border:1px solid var(--bd2);border-radius:var(--r8);padding:10px 12px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;resize:vertical;outline:none;min-height:72px;line-height:1.5;box-sizing:border-box"></textarea>
-      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin:10px 0 6px">Assigned To</div>
+      <div style="font-size:10px;font-weight:800;color:var(--dm2);letter-spacing:1px;text-transform:uppercase;margin:10px 0 6px">Assigned To <span style="font-weight:500;color:var(--dm);text-transform:none;letter-spacing:0">(select one or both)</span></div>
       <div id="installAssigneeRow" style="display:flex;gap:8px">
         <button type="button" data-assignee="" onclick="setInstallAssignee('')" style="flex:1;border:1px solid var(--bd);border-radius:var(--r8);padding:9px 8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;background:var(--sf2);color:var(--tx)">Unassigned</button>
         <button type="button" data-assignee="Jeff" onclick="setInstallAssignee('Jeff')" style="flex:1;border:1px solid var(--bd);border-radius:var(--r8);padding:9px 8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;background:var(--sf2);color:var(--tx)">Jeff</button>
@@ -2646,10 +2646,13 @@ function renderCalendarWeek() {
     html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:200px;min-width:0;padding:10px;cursor:${clickable?'pointer':'default'};${isPast?'opacity:.55;':''}transition:background .12s;overflow:hidden">
       <div style="font-size:13px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':'var(--tx)'};margin-bottom:6px">${d.getDate()}</div>`;
     installs.forEach(install => {
-      const bg = installColor(install.tech);
-      const fg = installTextColor(install.tech);
-      const who = install.tech ? `<div style='font-weight:800;font-size:9px;letter-spacing:.5px;text-transform:uppercase;opacity:.95;margin-bottom:2px'>${install.tech}</div>` : '';
-      html += `<div style="background:${bg};color:${fg};font-size:11px;font-weight:700;padding:5px 7px;border-radius:5px;margin-bottom:5px;line-height:1.3;word-break:break-word" title="${install.name.replace(/"/g,'&quot;')}">${who}${install.name}${install.notes?`<div style='font-weight:500;font-size:10px;margin-top:3px;opacity:.92;line-height:1.35'>${install.notes.replace(/</g,'&lt;').slice(0,80)}${install.notes.length>80?'…':''}</div>`:''}</div>`;
+      const techs = techList(install.tech);
+      const multi = techs.length > 1;
+      const bg = installBg(techs);
+      const fg = multi ? '#fff' : (techs.length ? installTextColor(techs[0]) : '#fff');
+      const shadow = multi ? 'text-shadow:0 1px 2px rgba(0,0,0,.65);' : '';
+      const who = techPills(techs);
+      html += `<div style="background:${bg};color:${fg};${shadow}font-size:11px;font-weight:700;padding:5px 7px;border-radius:5px;margin-bottom:5px;line-height:1.3;word-break:break-word" title="${(techs.length?techs.join(' & ')+' · ':'')+install.name.replace(/"/g,'&quot;')}">${who}${install.name}${install.notes?`<div style='font-weight:500;font-size:10px;margin-top:3px;opacity:.92;line-height:1.35'>${install.notes.replace(/</g,'&lt;').slice(0,80)}${install.notes.length>80?'…':''}</div>`:''}</div>`;
     });
     html += `</div>`;
   }
@@ -2685,9 +2688,12 @@ function renderCalendarMonth() {
       html += `<div onclick="${clickable ? `openInstallDay('${dateStr}')` : ''}" style="background:${isToday?'rgba(59,130,246,.12)':'var(--sf2)'};border:1px solid ${isToday?'var(--ac)':'var(--bd)'};border-radius:var(--r8);min-height:90px;min-width:0;padding:6px 7px;cursor:${clickable?'pointer':'default'};${outOfMonth?'opacity:.35;':''}${isPast && !outOfMonth?'opacity:.55;':''}transition:background .12s;overflow:hidden">
         <div style="font-size:12px;font-weight:${isToday?800:600};color:${isToday?'var(--ac)':outOfMonth?'var(--dm2)':'var(--tx)'};margin-bottom:3px">${d.getDate()}</div>`;
       installs.forEach(install => {
-        const bg = installColor(install.tech);
-        const fg = installTextColor(install.tech);
-        html += `<div style="background:${bg};color:${fg};font-size:10px;font-weight:700;padding:3px 5px;border-radius:4px;margin-bottom:3px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(install.tech?install.tech+': ':'')+install.name.replace(/"/g,'&quot;')}">${install.name}</div>`;
+        const techs = techList(install.tech);
+        const multi = techs.length > 1;
+        const bg = installBg(techs);
+        const fg = multi ? '#fff' : (techs.length ? installTextColor(techs[0]) : '#fff');
+        const shadow = multi ? 'text-shadow:0 1px 1px rgba(0,0,0,.65);' : '';
+        html += `<div style="background:${bg};color:${fg};${shadow}font-size:10px;font-weight:700;padding:3px 5px;border-radius:4px;margin-bottom:3px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(techs.length?techs.join(' & ')+': ':'')+install.name.replace(/"/g,'&quot;')}">${install.name}</div>`;
       });
       html += `</div>`;
       d.setDate(d.getDate() + 1);
@@ -2703,10 +2709,11 @@ let installPopupMode = 'view';
 // Set during 'edit' mode so the submit/promote/delete handlers know what to act on
 let installEditOldDate = null;
 let installEditOldSlot = null;
-// Currently-selected install assignee: '' (unassigned), 'Jeff', or 'Landi'
-let installAssignee = '';
+// Currently-selected install assignees. Empty = unassigned. Can hold both
+// 'Jeff' and 'Landi' when they're working the same install together.
+let installAssignees = [];
 
-// Color for an assigned install. Reuses the board's tech colors:
+// Color for a single assigned tech. Reuses the board's tech colors:
 // Jeff = red, Landi = yellow. Unassigned falls back to the purple install color.
 function installColor(tech) {
   if (tech === 'Jeff')  return TC.Jeff  || '#FF1A1A';
@@ -2716,12 +2723,51 @@ function installColor(tech) {
 // Yellow needs dark text for readability; everything else uses white.
 function installTextColor(tech) { return tech === 'Landi' ? '#000' : '#fff'; }
 
-function setInstallAssignee(t) { installAssignee = t || ''; paintAssigneePicker(); }
+// Parse a stored tech value ("Jeff", "Jeff,Landi", "") into a clean array.
+function techList(tech) {
+  return String(tech || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// Background for an install chip given its assigned techs:
+//   none → purple · one → that solid color · two+ → hard diagonal split of colors
+function installBg(techs) {
+  if (!techs.length)      return '#8b5cf6';
+  if (techs.length === 1) return installColor(techs[0]);
+  const n = techs.length;
+  const stops = techs.map((t, i) => {
+    const c = installColor(t);
+    return `${c} ${(i / n * 100).toFixed(1)}%, ${c} ${((i + 1) / n * 100).toFixed(1)}%`;
+  }).join(', ');
+  return `linear-gradient(135deg, ${stops})`;
+}
+
+// Small colored name pills (one per tech) used on chips and in the day list.
+function techPills(techs, opts = {}) {
+  if (!techs.length) return '';
+  const gap = opts.gap || '5px';
+  return `<div style="display:flex;flex-wrap:wrap;gap:${gap};margin-bottom:4px">${
+    techs.map(t => `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:2px 8px;border-radius:10px;background:${installColor(t)};color:${installTextColor(t)}">${t}</span>`).join('')
+  }</div>`;
+}
+
+// Toggle a tech in/out of the selection. Empty value ('') clears all.
+function setInstallAssignee(t) {
+  if (!t) {
+    installAssignees = [];
+  } else {
+    const i = installAssignees.indexOf(t);
+    if (i >= 0) installAssignees.splice(i, 1);
+    else        installAssignees.push(t);
+  }
+  paintAssigneePicker();
+}
 
 function paintAssigneePicker() {
+  const empty = installAssignees.length === 0;
   document.querySelectorAll('#installAssigneeRow button').forEach(b => {
     const v = b.dataset.assignee;
-    if (v === installAssignee) {
+    const sel = v === '' ? empty : installAssignees.includes(v);
+    if (sel) {
       const col = installColor(v);
       b.style.background  = col;
       b.style.color       = installTextColor(v);
@@ -2764,7 +2810,7 @@ function openInstallDay(dateStr) {
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
             <div style="flex:1;min-width:0">
               <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px;word-break:break-word">${ins.name.replace(/</g,'&lt;')}</div>
-              ${ins.tech?`<div style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:2px 8px;border-radius:10px;margin-bottom:4px;background:${installColor(ins.tech)};color:${installTextColor(ins.tech)}">${ins.tech}</div>`:''}
+              ${techPills(techList(ins.tech))}
               ${ins.address?`<div style="font-size:11px;color:var(--dm2);margin-bottom:3px;word-break:break-word">📍 ${ins.address.replace(/</g,'&lt;')}</div>`:''}
               ${ins.notes?`<div style="font-size:11px;color:#f97316;font-weight:600;line-height:1.4;word-break:break-word">${ins.notes.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`:''}
             </div>
@@ -2811,7 +2857,7 @@ function openInstallDay(dateStr) {
     document.getElementById('installAddrInput').value = '';
     document.getElementById('installNotesInput').value = '';
     document.getElementById('installDateInput').value = dateStr;
-    installAssignee = ''; paintAssigneePicker();
+    installAssignees = []; paintAssigneePicker();
   }
 
   document.getElementById('installDayBg').style.display = 'flex';
@@ -2845,7 +2891,7 @@ function openInstallAdd() {
   document.getElementById('installAddrInput').value = '';
   document.getElementById('installNotesInput').value = '';
   document.getElementById('installDateInput').value = fmtDate(new Date());
-  installAssignee = ''; paintAssigneePicker();
+  installAssignees = []; paintAssigneePicker();
   document.getElementById('installDayBg').style.display = 'flex';
 }
 
@@ -2879,7 +2925,7 @@ function enterEditMode(date, slot) {
   document.getElementById('installAddrInput').value = ins.address || '';
   document.getElementById('installNotesInput').value = ins.notes || '';
   document.getElementById('installDateInput').value = date;
-  installAssignee = ins.tech || ''; paintAssigneePicker();
+  installAssignees = techList(ins.tech); paintAssigneePicker();
 }
 
 function closeInstallDay() {
@@ -2901,15 +2947,13 @@ async function submitInstall() {
   const dow = new Date(yy, mm-1, dd).getDay();
   if (dow === 0 || dow === 6) { toast('Weekends are not allowed for installs'); return; }
 
-  // Persist the assignee TWO ways so it survives no matter what the backend does:
-  //   1. as a dedicated `tech` field (used if the updated Worker is deployed)
-  //   2. as a hidden [[tech:Name]] tag tucked into notes (works with ANY backend
-  //      that stores notes — which the current one does)
-  // normalizeInstall() reads whichever is present and strips the tag from view,
-  // so the user never sees it. `notes` here is already tag-free (the form was
-  // prefilled from cleaned notes), so this can't double-tag.
-  const notesToSave = installAssignee
-    ? (notes ? notes + '\n' : '') + `[[tech:${installAssignee}]]`
+  // Persist the assignee(s) two ways so it survives any backend:
+  //   1. a `tech` field — comma-joined for multiple ("Jeff,Landi")
+  //   2. a hidden [[tech:...]] tag in notes (works with any backend that stores notes)
+  // normalizeInstall() reads whichever is present and strips the tag from view.
+  const techStr = installAssignees.join(',');
+  const notesToSave = techStr
+    ? (notes ? notes + '\n' : '') + `[[tech:${techStr}]]`
     : notes;
 
   try {
@@ -2918,10 +2962,10 @@ async function submitInstall() {
       res = await apiCall('/updateInstall', {
         oldDate: installEditOldDate,
         oldSlot: installEditOldSlot,
-        date, name, address: addr, notes: notesToSave, tech: installAssignee,
+        date, name, address: addr, notes: notesToSave, tech: techStr,
       });
     } else {
-      res = await apiCall('/addInstall', { date, name, address: addr, notes: notesToSave, tech: installAssignee });
+      res = await apiCall('/addInstall', { date, name, address: addr, notes: notesToSave, tech: techStr });
     }
     if (!res.success) {
       toast(res.error || 'Failed to save');
@@ -2980,36 +3024,44 @@ async function deleteInstall(date, slot) {
 }
 
 async function promoteInstall(date, slot) {
-  // Route by the install's assigned color:
-  //   Landi (yellow) → Landi's column
-  //   Jeff (red) or Unassigned → Jeff's column
-  // Uses /addJobAtTop to drop the ticket into the correct column, then removes
-  // the calendar install. (Replaces the old hardcoded-to-Jeff /promoteInstall.)
+  // Route by the install's assigned color(s):
+  //   Landi (yellow) → Landi's column · Jeff (red) → Jeff's column
+  //   Both → drops the ticket into BOTH columns · Unassigned → Jeff's column
+  // Uses /addJobAtTop per target, then removes the calendar install.
   const ins = calendarInstalls.find(i => i.date === date && i.slot === slot);
   if (!ins) { toast('Install not found'); return; }
-  const target = (ins.tech === 'Landi') ? 'Landi' : 'Jeff';
+  const targets = techList(ins.tech);
+  if (!targets.length) targets.push('Jeff');   // default when unassigned
   const jobInput = ins.address ? `${ins.name}, ${ins.address}` : ins.name;
   try {
-    const addRes = await apiCall('/addJobAtTop', { techName: target, jobInput, jobNote: ins.notes || '' });
-    if (!addRes.success) { toast(addRes.error || 'Failed to promote'); return; }
-    // Ticket created — now clear the calendar entry. If THIS fails we don't retry
-    // the add, to avoid creating a duplicate ticket.
+    // Add the ticket to each assigned tech's column. Track how many landed so a
+    // partial failure doesn't silently delete the install.
+    let added = 0;
+    for (const t of targets) {
+      const addRes = await apiCall('/addJobAtTop', { techName: t, jobInput, jobNote: ins.notes || '' });
+      if (addRes.success) added++;
+      else console.error('addJobAtTop failed for', t, addRes.error);
+    }
+    if (!added) { toast('Failed to promote'); return; }
+    if (added < targets.length) {
+      toast(`Promoted to ${added} of ${targets.length} columns — check the board`);
+      closeInstallDay(); await loadCalendarData(); renderCalendar(); loadData();
+      return;
+    }
+    // All tickets created — now clear the calendar entry.
     try {
       await apiCall('/deleteInstall', { date, slot });
     } catch (delErr) {
       console.error('Install delete after promote failed:', delErr);
-      toast(`Promoted to ${target} — but couldn't clear the calendar entry`);
-      closeInstallDay();
-      await loadCalendarData();
-      renderCalendar();
-      loadData();
+      toast(`Promoted to ${targets.join(' & ')} — but couldn't clear the calendar entry`);
+      closeInstallDay(); await loadCalendarData(); renderCalendar(); loadData();
       return;
     }
-    toast(`Install moved to ${target}'s column`);
+    toast(`Install moved to ${targets.join(' & ')}'s column${targets.length>1?'s':''}`);
     closeInstallDay();
     await loadCalendarData();
     renderCalendar();
-    // Refresh the main board to show the new ticket
+    // Refresh the main board to show the new ticket(s)
     loadData();
   } catch (e) {
     toast('Failed to promote install');
