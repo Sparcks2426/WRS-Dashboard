@@ -2566,11 +2566,9 @@ async function loadCalendarData() {
 }
 
 // Resolve an install's assigned tech and present clean notes.
-// The backend now stores a native `tech` field, which is preferred. As a
-// safety net for any installs saved before that (which carried a hidden
-// [[tech:Name]] tag inside notes), we still recover the tech from the tag and
-// strip it so it never shows to users. Re-saving such an install writes clean
-// notes + native tech, retiring the tag for that entry.
+// Reads the assignee from a dedicated `tech` field if the backend provides one,
+// otherwise recovers it from the hidden [[tech:Name]] tag embedded in notes
+// (see submitInstall). Either way the tag is stripped so users never see it.
 function normalizeInstall(ins) {
   let tech = ins.tech || '';
   let notes = ins.notes || '';
@@ -2903,16 +2901,27 @@ async function submitInstall() {
   const dow = new Date(yy, mm-1, dd).getDay();
   if (dow === 0 || dow === 6) { toast('Weekends are not allowed for installs'); return; }
 
+  // Persist the assignee TWO ways so it survives no matter what the backend does:
+  //   1. as a dedicated `tech` field (used if the updated Worker is deployed)
+  //   2. as a hidden [[tech:Name]] tag tucked into notes (works with ANY backend
+  //      that stores notes — which the current one does)
+  // normalizeInstall() reads whichever is present and strips the tag from view,
+  // so the user never sees it. `notes` here is already tag-free (the form was
+  // prefilled from cleaned notes), so this can't double-tag.
+  const notesToSave = installAssignee
+    ? (notes ? notes + '\n' : '') + `[[tech:${installAssignee}]]`
+    : notes;
+
   try {
     let res;
     if (installPopupMode === 'edit') {
       res = await apiCall('/updateInstall', {
         oldDate: installEditOldDate,
         oldSlot: installEditOldSlot,
-        date, name, address: addr, notes, tech: installAssignee,
+        date, name, address: addr, notes: notesToSave, tech: installAssignee,
       });
     } else {
-      res = await apiCall('/addInstall', { date, name, address: addr, notes, tech: installAssignee });
+      res = await apiCall('/addInstall', { date, name, address: addr, notes: notesToSave, tech: installAssignee });
     }
     if (!res.success) {
       toast(res.error || 'Failed to save');
