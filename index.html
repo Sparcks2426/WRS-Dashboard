@@ -2558,11 +2558,28 @@ function closeCalendar() {
 async function loadCalendarData() {
   try {
     const res = await apiCall('/getInstalls', {});
-    calendarInstalls = res.installs || [];
+    calendarInstalls = (res.installs || []).map(normalizeInstall);
   } catch (e) {
     console.error('Calendar load failed:', e);
     calendarInstalls = [];
   }
+}
+
+// Resolve an install's assigned tech and present clean notes.
+// The backend now stores a native `tech` field, which is preferred. As a
+// safety net for any installs saved before that (which carried a hidden
+// [[tech:Name]] tag inside notes), we still recover the tech from the tag and
+// strip it so it never shows to users. Re-saving such an install writes clean
+// notes + native tech, retiring the tag for that entry.
+function normalizeInstall(ins) {
+  let tech = ins.tech || '';
+  let notes = ins.notes || '';
+  const m = notes.match(/\[\[tech:([^\]]+)\]\]/i);
+  if (m) {
+    if (!tech) tech = m[1].trim();
+    notes = notes.replace(/\s*\[\[tech:[^\]]+\]\]\s*/i, ' ').replace(/\s+$/,'').trim();
+  }
+  return { ...ins, tech, notes };
 }
 
 function calSetMode(mode) {
