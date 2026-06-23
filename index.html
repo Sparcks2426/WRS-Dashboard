@@ -127,7 +127,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 
 /* ── JOB CARD ── */
 .jc{padding:9px 10px;border-radius:var(--r8);border-left:3px solid transparent;display:flex;align-items:flex-start;gap:7px;background:var(--sf2);cursor:default;user-select:none;position:relative;transition:filter .12s,transform .1s}
-.jn,.ja,.jnotes{user-select:text;cursor:text}
+.jn,.ja,.jnotes,.jr{user-select:text;cursor:text}
+.jr{font-size:11px;color:#38bdf8;margin-top:2px;display:block;word-break:break-word;line-height:1.4;font-weight:600}
 .jc:hover{filter:brightness(1.1)}
 .jc.dragging{opacity:.3;transform:scale(.96)}
 .jc.dragover{border-top:2px solid var(--ac);padding-top:11px}
@@ -201,7 +202,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 /* ── READ-ONLY ── */
 .readonly .db,.readonly .ct,.readonly .arow,.readonly .draghandle{display:none!important}
 .readonly .jc{cursor:default}
-.readonly .jn,.readonly .ja,.readonly .jnotes{user-select:text;cursor:text}
+.readonly .jn,.readonly .ja,.readonly .jnotes,.readonly .jr{user-select:text;cursor:text}
 
 /* ── TECH VIEW ── */
 #techView{display:none}
@@ -737,8 +738,8 @@ const TC = {
   Christian:'#00FFFF', Mijail:'#0066FF', Louis:'#B800FF',
   Maikol:'#FF00FF', Jesse:'#FF1493', Landon:'#00A86B', QUE:'#FF8C00',
 };
-const JOB_ROW_START = 6, JOB_ROW_END = 18;  // rows 6–18
-const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23
+const JOB_ROW_START = 6, JOB_ROW_END = 105;  // rows 6–105 → up to 100 tickets per column (cap removed). Raise JOB_ROW_END for more.
+const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // legacy — vendor-note rows are no longer read; the Vendor Notes panel is static in this file
 
 // ── Status maps ──
 const SL  = { green:"Today's Tickets", orange:"Follow Up", yellow:"Quote Needed", blue:"Parts Needed", inst:"Installation", pink:"JP Review", john:"John Follow Up", close:"Close Out", none:"Untagged", que:"➜ Move to QUE" };
@@ -889,7 +890,7 @@ let isSaving = false; // blocks auto-refresh during sheet writes
 
 // ── Session heartbeat ──
 const SESSION_ID = Math.random().toString(36).slice(2,10); // unique per tab/load
-const HEARTBEAT_ROW = 27;   // row 27: one column per tech (A-K), col L onward for non-tech users
+const HEARTBEAT_ROW = 110;   // moved below the expanded job range (was 27): one column per tech (A-K), col L onward for non-tech users
 const HEARTBEAT_COL_NONTECHS = 12; // column L (1-based) for non-tech users packed as JSON in one cell
 let SESSION_INFO = null; // populated async on login with device + geo info
 
@@ -1250,16 +1251,17 @@ function setSyncState(state) {
 async function loadData() {
   setSyncState('syncing');
   try {
-    // ── Fetch jobs + vendor notes (rows 6-23) ──
-    // Range A6:K23 → sheetData index 0 = row 6
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
+    // ── Fetch jobs (rows 6-105) ──
+    // Range A6:K105 → sheetData index 0 = row 6. Cap removed: up to 100 tickets/column.
+    const JOB_ROW_COUNT = JOB_ROW_END - JOB_ROW_START + 1;
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A${JOB_ROW_START}:K${JOB_ROW_END}`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
     jobs = [];
 
-    // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
+    // ── Read job tickets (rows 6-105, sheetData index 0..99) ──
     let id = 1;
-    for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
+    for (let r = 0; r < JOB_ROW_COUNT; r++) {  // rows 6-105 → sheetData[0..99]
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < 11; c++) {
         const cell = rowData[c];
@@ -1281,7 +1283,7 @@ async function loadData() {
         // Strip legacy SHOPNOTE: prefix that survived migration from row 26
         if (jobNote.startsWith('SHOPNOTE:')) jobNote = jobNote.slice('SHOPNOTE:'.length).trim();
         const parsed = parseJob(cellVal);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, repair: parsed.repair, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
           job.lat = geoCache[parsed.addr].lat;
           job.lng = geoCache[parsed.addr].lng;
@@ -1290,16 +1292,9 @@ async function loadData() {
       }
     }
 
-    // ── Vendor notes (rows 19-23, sheetData index 13-17) ──
+    // ── Vendor notes: former rows 19-23 are now job rows. The Vendor Notes
+    //    panel is rendered from a static list in this file, so nothing to read. ──
     vendorNotes = [];
-    for (let r = 13; r < 18; r++) {
-      const rowData = sheetData[r]?.values || [];
-      for (let c = 0; c < 11; c++) {
-        const cell = rowData[c];
-        const val = cell?.userEnteredValue?.stringValue || '';
-        if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
-      }
-    }
 
     setSyncState('ok');
     document.getElementById('loadEl').style.display = 'none';
@@ -1328,17 +1323,29 @@ function parseJob(raw) {
   // Canonical format: "Site Name, Street, City, State ZIP"
   // Site names never contain commas, so the FIRST comma is the boundary.
   // This matches the Worker's parseJobCell exactly.
+  // The name portion (before the first comma) may carry an inline repair
+  // segment marked "||R:<repair>". It's stored combined with the name but
+  // split back out here so the card can show name and repair separately.
   const val = String(raw || '').trim();
-  if (!val) return { name: '', addr: '' };
+  if (!val) return { name: '', repair: '', addr: '' };
   const firstComma = val.indexOf(',');
-  if (firstComma === -1) {
-    // No comma — fall back to legacy name-only lookup
-    return { name: val, addr: LOC[val] || '' };
+  let namePart = firstComma === -1 ? val : val.slice(0, firstComma).trim();
+  let addr     = firstComma === -1 ? ''  : val.slice(firstComma + 1).trim();
+  let repair = '';
+  const rIdx = namePart.indexOf('||R:');
+  if (rIdx !== -1) {
+    repair   = namePart.slice(rIdx + 4).trim();
+    namePart = namePart.slice(0, rIdx).trim();
   }
-  return {
-    name: val.slice(0, firstComma).trim(),
-    addr: val.slice(firstComma + 1).trim(),
-  };
+  // No comma → legacy name-only address lookup (on the clean name)
+  if (firstComma === -1) addr = LOC[namePart] || '';
+  return { name: namePart, repair, addr };
+}
+
+// Rebuild the stored "name(||R:repair), address" name+repair portion from a job
+// object, so moves/reorders preserve the repair text.
+function nameWR(j) {
+  return j.repair ? `${j.job} ||R:${j.repair}` : j.job;
 }
 
 // ════════════════════════════════════════════
@@ -1432,9 +1439,12 @@ function rBoard() {
     if (canWrite) h += `<div class="arow" style="flex-direction:column;gap:4px;padding:7px 8px">
       <div style="display:flex;gap:5px;width:100%">
         <input class="ainp" placeholder="New ticket name…" id="ai_${tech}" autocomplete="off"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();const a=document.getElementById('ai_addr_${tech}');if(a)a.focus();}">
+          onkeydown="if(event.key==='Enter'){event.preventDefault();const a=document.getElementById('ai_rep_${tech}');if(a)a.focus();}">
         <button class="abtn" style="background:#0e1320;border:1px solid ${tc}40;color:#7a8aaa" onclick="addJFull('${tech}')">+</button>
       </div>
+      <input class="ainp" placeholder="Repair (optional)…" id="ai_rep_${tech}" autocomplete="off"
+        style="width:100%;font-size:11px"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();const a=document.getElementById('ai_addr_${tech}');if(a)a.focus();}">
       <input class="ainp" placeholder="Address (required)…" id="ai_addr_${tech}" autocomplete="off"
         style="width:100%;font-size:11px"
         onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}">
@@ -1511,6 +1521,7 @@ function jobCard(j, editable, stopNum, techColor) {
     ${numBadge}
     <div class="jinfo">
       <span class="jn">${j.job}</span>
+      ${j.repair?`<span class="jr">🔧 ${String(j.repair).replace(/</g,'&lt;')}</span>`:''}
       ${j.notes?`<span class="jnotes">${String(j.notes).replace(/</g,'&lt;')}</span>`:''}
       ${j.address?`<span class="ja">📍 ${j.address}</span>`:''}
     </div>
@@ -1526,8 +1537,11 @@ function jobCard(j, editable, stopNum, techColor) {
 function addJFull(tech) {
   if (!canWrite) return;
   const nameInp = document.getElementById('ai_'+tech);
+  const repInp  = document.getElementById('ai_rep_'+tech);
   const addrInp = document.getElementById('ai_addr_'+tech);
   const name = nameInp?.value.trim();
+  // Repair is reserved from commas (comma = name/address boundary) and the ||R: marker
+  const repair = (repInp?.value || '').trim().replace(/,/g, ';').replace(/\|\|R:/g, '');
   const addr = addrInp?.value.trim();
   if (!name) {
     toast('Ticket name is required');
@@ -1544,17 +1558,21 @@ function addJFull(tech) {
     }
     return;
   }
-  const v = `${name}, ${addr}`;
+  // Name and repair are combined in the stored text (repair folded into the
+  // name portion before the comma), then shown separately on the card.
+  const namePart = repair ? `${name} ||R:${repair}` : name;
+  const v = `${namePart}, ${addr}`;
   // Clear inputs
   nameInp.value = '';
+  if (repInp) repInp.value = '';
   addrInp.value = '';
   const parsed = parseJob(v);
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
   let targetRow = null;
   for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
-  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
+  if (!targetRow) { toast('Column full'); return; }
   const col = TECHS.indexOf(tech)+1;
-  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
+  const newJob = { id: Date.now(), tech, job: parsed.name, repair: parsed.repair, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
   render(); updateMap();
   isSaving = true;
@@ -1573,9 +1591,9 @@ function addJ(tech) {
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
   let targetRow = null;
   for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
-  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
+  if (!targetRow) { toast('Column full'); return; }
   const col = TECHS.indexOf(tech)+1;
-  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
+  const newJob = { id: Date.now(), tech, job: parsed.name, repair: parsed.repair, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
   render(); updateMap();
   // Pause auto-refresh while the write is in flight; otherwise the 60s
@@ -1681,9 +1699,9 @@ function closeJobNote() {
 }
 
 function _writeJobNote(j, noteText) {
-  // Reconstruct the cell value: "<job name>, <address>" + optional " ||NOTE:<text>".
-  // If parseJob returned no addr, fall back to just the job name.
-  const base = j.address ? `${j.job}, ${j.address}` : j.job;
+  // Reconstruct the cell value: "<name(||R:repair)>, <address>" + optional " ||NOTE:<text>".
+  // If parseJob returned no addr, fall back to just the name portion.
+  const base = j.address ? `${nameWR(j)}, ${j.address}` : nameWR(j);
   const cellVal = noteText ? `${base} ||NOTE:${noteText}` : base;
   isSaving = true;
   return sheetsSetValue(j.row, j.col, cellVal)
@@ -1738,16 +1756,16 @@ async function moveToQue(id) {
   closeDD();
   if (j.col === 11) { toast('Already in QUE'); return; }
 
-  // Find next empty row in QUE column (col 11, rows 6-18)
+  // Find next empty row in QUE column (col 11)
   const queJobs = jobs.filter(x => x.col === 11).map(x => x.row);
   let targetRow = null;
-  for (let r = 6; r <= 18; r++) {
+  for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) {
     if (!queJobs.includes(r)) { targetRow = r; break; }
   }
-  if (targetRow === null) { toast('QUE column is full (max 13)'); return; }
+  if (targetRow === null) { toast('QUE column is full'); return; }
 
-  // Build the cell value: name, address, optional ||NOTE:
-  const base = j.address ? `${j.job}, ${j.address}` : j.job;
+  // Build the cell value: name(||R:repair), address, optional ||NOTE:
+  const base = j.address ? `${nameWR(j)}, ${j.address}` : nameWR(j);
   const cellVal = j.notes ? `${base} ||NOTE:${j.notes}` : base;
   const srcRow = j.row, srcCol = j.col;
 
@@ -3107,6 +3125,7 @@ function bindDrag() {
         const sr=sJob.row, tr=tJob.row;
         [sJob.row,tJob.row]=[tJob.row,sJob.row];
         [sJob.job,tJob.job]=[tJob.job,sJob.job];
+        [sJob.repair,tJob.repair]=[tJob.repair,sJob.repair];
         [sJob.color,tJob.color]=[tJob.color,sJob.color];
         [sJob.address,tJob.address]=[tJob.address,sJob.address];
         [sJob.lat,tJob.lat]=[tJob.lat,sJob.lat];
@@ -3135,7 +3154,7 @@ function bindDrag() {
         let newRow = null;
         for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
         if (!newRow) { toast(`${newTech} column is full`); return; }
-        const srcBase = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
+        const srcBase = nameWR(sJob) + (sJob.address ? ', ' + sJob.address : '');
         const srcVal  = sJob.notes ? `${srcBase} ||NOTE:${sJob.notes}` : srcBase;
         const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
         // Pause auto-refresh, write sheet first, then update UI
@@ -3174,7 +3193,7 @@ function bindDrag() {
       let newRow=null;
       for(let r=JOB_ROW_START;r<=JOB_ROW_END;r++){if(!occupied.has(r)){newRow=r;break;}}
       if(!newRow){toast(`${newTech} column is full`);return;}
-      const srcVal=sJob.job+(sJob.address?' - '+sJob.address:'');
+      const srcVal=nameWR(sJob)+(sJob.address?', '+sJob.address:'');
       const srcHex=STATUS_TO_HEX[sJob.color]||'#ffffff';
       isSaving = true;
       toast(`Moving to ${newTech}...`);
@@ -3414,7 +3433,7 @@ async function renderTechView(withMap=true) {
       lat = cached?.lat || j.lat || null;
       lng = cached?.lng || j.lng || null;
     }
-    return { label:String(i+1), name:j.job, notes, addr:j.address, lat, lng, isShop, jobRef:j };
+    return { label:String(i+1), name:j.job, repair:j.repair, notes, addr:j.address, lat, lng, isShop, jobRef:j };
   });
 
   // Always build cards immediately so the list is visible
@@ -3550,6 +3569,7 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
       <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'};flex-shrink:0">${s.label}</div>
       <div style="flex:1;min-width:0;user-select:text">
         <div class="tv-job">${s.name}</div>
+        ${s.repair?`<div style="font-size:12px;color:#38bdf8;margin-top:3px;font-weight:600;word-break:break-word">🔧 ${String(s.repair).replace(/</g,'&lt;')}</div>`:''}
         ${coBadges}
         ${s.addr?`<div class="tv-addr" style="margin-top:3px">📍 ${s.addr}</div>`:''}
         ${s.notes?`<div style="font-size:13px;color:#f97316;margin-top:6px;line-height:1.5;font-weight:700;user-select:text;word-break:break-word">${s.notes.replace(/</g,'&lt;')}</div>`:''}
