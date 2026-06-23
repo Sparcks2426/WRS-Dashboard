@@ -3154,7 +3154,7 @@ function bindDrag() {
         let newRow = null;
         for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
         if (!newRow) { toast(`${newTech} column is full`); return; }
-        const srcBase = nameWR(sJob) + (sJob.address ? ', ' + sJob.address : '');
+        const srcBase = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
         const srcVal  = sJob.notes ? `${srcBase} ||NOTE:${sJob.notes}` : srcBase;
         const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
         // Pause auto-refresh, write sheet first, then update UI
@@ -3193,7 +3193,7 @@ function bindDrag() {
       let newRow=null;
       for(let r=JOB_ROW_START;r<=JOB_ROW_END;r++){if(!occupied.has(r)){newRow=r;break;}}
       if(!newRow){toast(`${newTech} column is full`);return;}
-      const srcVal=nameWR(sJob)+(sJob.address?', '+sJob.address:'');
+      const srcVal=sJob.job+(sJob.address?' - '+sJob.address:'');
       const srcHex=STATUS_TO_HEX[sJob.color]||'#ffffff';
       isSaving = true;
       toast(`Moving to ${newTech}...`);
