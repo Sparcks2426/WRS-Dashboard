@@ -80,7 +80,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .legend{display:none}
 
 /* ── MAP ── */
-.mapsec{margin-bottom:20px;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r16);overflow:hidden}
+.mapsec{margin-bottom:20px;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r16);overflow:hidden;max-width:1000px;margin-right:auto}
 .maphdr{padding:12px 18px;background:var(--sf2);border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center}
 .maphdr-left{display:flex;align-items:center;gap:10px}
 .maphdr h3{font-family:'DM Serif Display',serif;font-size:16px;color:#fff;font-weight:400;font-style:italic}
@@ -312,6 +312,17 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   </div>
 </div>
 
+<!-- ── COMPRESSOR MODAL (admin-only) ── -->
+<div id="compressorModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:99500;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)closeCompressor()">
+  <div style="background:#0e1117;border:1px solid #253048;border-radius:16px;width:100%;max-width:920px;height:90vh;display:flex;flex-direction:column;box-shadow:0 32px 80px rgba(0,0,0,.85);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #253048;flex-shrink:0">
+      <div style="font-family:'DM Serif Display',serif;font-size:18px;color:#fff;font-style:italic">🗜️ Image &amp; PDF Compressor</div>
+      <button onclick="closeCompressor()" style="background:none;border:1px solid #253048;border-radius:6px;color:#8a95aa;font-family:Inter,sans-serif;font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;letter-spacing:.5px">CLOSE ✕</button>
+    </div>
+    <iframe id="compressorFrame" style="flex:1;width:100%;border:none;background:#0e1117" title="Image and PDF Compressor"></iframe>
+  </div>
+</div>
+
 <!-- ── LOGIN ── -->
 <div class="login-wrap" id="loginScreen">
   <div class="login-box">
@@ -341,7 +352,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <span id="syncText" style="color:var(--dm2);font-size:13px;font-weight:800;letter-spacing:.5px">LOADING</span>
       <button class="sync-btn" onclick="loadData()">↻ SYNC</button>
     </div>
-    <div class="topbar-spacer"></div>
+    <div class="topbar-spacer" style="display:flex;justify-content:center;align-items:center">
+      <button id="compressorBtn" onclick="openCompressor()" style="display:none;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:12px;font-weight:800;padding:8px 16px;cursor:pointer;white-space:nowrap;letter-spacing:.4px;box-shadow:0 4px 12px rgba(124,58,237,.35)">🗜️ IMAGE / PDF COMPRESSOR</button>
+    </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
       <div class="userbar" id="userbar"></div>
       <div id="topbarButtons" style="display:none;gap:6px;flex-wrap:wrap;justify-content:flex-end">
@@ -398,6 +411,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     </div>
 
     <!-- Special Columns: JP Review, John Follow Up, Follow Up, Quote Needed -->
+    <div style="margin:16px 0 10px;display:flex;justify-content:flex-start">
+      <input type="text" class="sbox" id="sbox2" placeholder="Search jobs or techs..." style="width:100%;max-width:520px">
+    </div>
     <div class="spcols" id="spcols"></div>
   </div>
 
@@ -727,16 +743,22 @@ const USERS = [
   { name:'Maikol',            pin:'1520', role:'read', tech:'Maikol'    },
   { name:'Jesse',             pin:'1488', role:'read', tech:'Jesse'     },
   { name:'Landon',            pin:'2535', role:'read', tech:'Landon'    },
+  { name:'Robert',            pin:'6473', role:'read', tech:'Robert'    },
 
 ];
 
 // ── Sheet Structure ──
-const TECHS = ['Jeff','Alex','Landi','Geni','Christian','Mijail','Louis','Maikol','Jesse','Landon','QUE'];
+// NOTE: Sheet column layout must match this order:
+//   A=Jeff, B=Landi, C=Geni, D=Christian, E=Mijail, F=Alex, G=Louis,
+//   H=Maikol, I=Robert, J=Landon, K=Jesse, L=QUE, M=non-tech heartbeat
+const TECHS = ['Jeff','Landi','Geni','Christian','Mijail','Alex','Louis','Maikol','Robert','Landon','Jesse','QUE'];
 const TC = {
-  Jeff:'#FF1A1A', Alex:'#FF8C00', Landi:'#FFEA00', Geni:'#39FF14',
-  Christian:'#00FFFF', Mijail:'#0066FF', Louis:'#B800FF',
-  Maikol:'#FF00FF', Jesse:'#FF1493', Landon:'#00A86B', QUE:'#FF8C00',
+  Jeff:'#FF1A1A', Landi:'#FFEA00', Geni:'#39FF14', Christian:'#00FFFF',
+  Mijail:'#0066FF', Alex:'#FF8C00', Louis:'#B800FF', Maikol:'#FF00FF',
+  Robert:'#FFD700', Landon:'#00A86B', Jesse:'#FF1493', QUE:'#FF8C00',
 };
+// Derived — QUE lives in the last tech column; non-tech heartbeats go one column past it.
+const QUE_COL = TECHS.indexOf('QUE') + 1;   // 12 (column L)
 const JOB_ROW_START = 6, JOB_ROW_END = 18;  // rows 6–18
 const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23
 
@@ -881,6 +903,7 @@ const TECH_START_LOCATIONS = {
   'Maikol':    { lat: null, lng: null, address: '2334 S Cypress Bend Dr, Pompano Beach, FL 33069' },
   'Jesse':     { lat: null, lng: null, address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
   'Landon':    { lat: null, lng: null, address: '4603 Kelmar Dr, West Palm Beach, FL 33415' },
+  'Robert':    { lat: null, lng: null, address: '' },
   'QUE':       { lat: null, lng: null, address: '' },
 };
 
@@ -889,8 +912,8 @@ let isSaving = false; // blocks auto-refresh during sheet writes
 
 // ── Session heartbeat ──
 const SESSION_ID = Math.random().toString(36).slice(2,10); // unique per tab/load
-const HEARTBEAT_ROW = 27;   // row 27: one column per tech (A-K), col L onward for non-tech users
-const HEARTBEAT_COL_NONTECHS = 12; // column L (1-based) for non-tech users packed as JSON in one cell
+const HEARTBEAT_ROW = 27;   // row 27: one column per tech (A-L, incl. QUE), col M for non-tech users
+const HEARTBEAT_COL_NONTECHS = QUE_COL + 1; // column M (1-based) for non-tech users packed as JSON in one cell
 let SESSION_INFO = null; // populated async on login with device + geo info
 
 // Collect device fingerprint + IP geolocation (no permission needed)
@@ -1152,6 +1175,9 @@ function startDash(user) {
   // Announcements admin button: admins/write only
   const annBtn = document.getElementById('annBtn');
   if (annBtn) annBtn.style.display = canWrite ? 'inline-block' : 'none';
+  // Compressor button (top-middle of admin panel): ADMINS ONLY
+  const compBtn = document.getElementById('compressorBtn');
+  if (compBtn) compBtn.style.display = (user.role === 'admin') ? 'inline-block' : 'none';
   // Show the topbar buttons row if ANY button is visible
   const topbarBtns = document.getElementById('topbarButtons');
   if (topbarBtns) {
@@ -1251,8 +1277,8 @@ async function loadData() {
   setSyncState('syncing');
   try {
     // ── Fetch jobs + vendor notes (rows 6-23) ──
-    // Range A6:K23 → sheetData index 0 = row 6
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:K23`);
+    // Range A6:L23 → sheetData index 0 = row 6 (12 tech columns incl. QUE)
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:L23`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
     jobs = [];
@@ -1261,7 +1287,7 @@ async function loadData() {
     let id = 1;
     for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
       const rowData = sheetData[r]?.values || [];
-      for (let c = 0; c < 11; c++) {
+      for (let c = 0; c < TECHS.length; c++) {   // 12 tech columns A-L (incl. QUE)
         const cell = rowData[c];
         const val = cell?.userEnteredValue?.stringValue || cell?.userEnteredValue?.formulaValue || '';
         if (!val || !val.trim()) continue;
@@ -1294,7 +1320,7 @@ async function loadData() {
     vendorNotes = [];
     for (let r = 13; r < 18; r++) {
       const rowData = sheetData[r]?.values || [];
-      for (let c = 0; c < 11; c++) {
+      for (let c = 0; c < TECHS.length; c++) {
         const cell = rowData[c];
         const val = cell?.userEnteredValue?.stringValue || '';
         if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
@@ -1392,6 +1418,105 @@ async function geocodeGreenJobs() {
 }
 
 // ════════════════════════════════════════════
+//  TICKET DRAFT PERSISTENCE
+//  The per-tech "New ticket name / Address" inputs at the top of each column
+//  used to vanish every ~60s when the auto-sync rebuilt the board via
+//  `innerHTML = h`. Now we mirror every keystroke into localStorage keyed by
+//  tech, snapshot live DOM values before each rBoard() wipe, and re-populate
+//  the inputs after the rebuild. Full page refreshes also restore.
+// ════════════════════════════════════════════
+const DRAFT_KEY = 'wrsTicketDrafts_v1';
+let ticketDrafts = (() => {
+  try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') || {}; }
+  catch(e) { return {}; }
+})();
+function saveDrafts() {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(ticketDrafts)); } catch(e) {}
+}
+// Read whatever is currently typed in every ai_/ai_addr_ input and merge it
+// into ticketDrafts + localStorage. Call this right before board innerHTML
+// gets replaced so we don't lose in-flight typing.
+function captureTicketDrafts() {
+  TECHS.forEach(tech => {
+    const n = document.getElementById('ai_'+tech);
+    const a = document.getElementById('ai_addr_'+tech);
+    if (!n && !a) return;
+    const nv = n ? n.value : '';
+    const av = a ? a.value : '';
+    if (nv || av) ticketDrafts[tech] = { name: nv, addr: av };
+    else delete ticketDrafts[tech];
+  });
+  saveDrafts();
+}
+// After the board is rebuilt, write draft text back into the freshly-created
+// inputs. Also refocus the field the user was last typing into so they don't
+// lose their place mid-word during a sync.
+let _lastFocusedDraft = null; // { tech, field:'name'|'addr', selStart, selEnd }
+function restoreTicketDrafts() {
+  Object.keys(ticketDrafts).forEach(tech => {
+    const d = ticketDrafts[tech]; if (!d) return;
+    const n = document.getElementById('ai_'+tech);
+    const a = document.getElementById('ai_addr_'+tech);
+    if (n && d.name) n.value = d.name;
+    if (a && d.addr) a.value = d.addr;
+  });
+  if (_lastFocusedDraft) {
+    const { tech, field, selStart, selEnd } = _lastFocusedDraft;
+    const el = document.getElementById((field === 'addr' ? 'ai_addr_' : 'ai_')+tech);
+    if (el) {
+      el.focus();
+      try { el.setSelectionRange(selStart, selEnd); } catch(e) {}
+    }
+  }
+}
+// Track which draft input has focus so we can restore it after re-render.
+// Also listen for input events (delegated) to persist as the user types.
+document.addEventListener('focusin', e => {
+  const t = e.target;
+  if (!t || !t.id) return;
+  let m;
+  if ((m = t.id.match(/^ai_addr_(.+)$/))) {
+    _lastFocusedDraft = { tech: m[1], field:'addr', selStart: t.selectionStart||0, selEnd: t.selectionEnd||0 };
+  } else if ((m = t.id.match(/^ai_(.+)$/)) && !t.id.startsWith('ai_addr_')) {
+    _lastFocusedDraft = { tech: m[1], field:'name', selStart: t.selectionStart||0, selEnd: t.selectionEnd||0 };
+  }
+});
+document.addEventListener('focusout', e => {
+  // Clear the "restore focus" hint after focus leaves the drafts area.
+  const t = e.target;
+  if (t && t.id && (t.id.startsWith('ai_addr_') || t.id.startsWith('ai_'))) {
+    // small delay so a re-render in the same tick can still refocus
+    setTimeout(() => {
+      const active = document.activeElement;
+      if (!active || !active.id || !(active.id.startsWith('ai_'))) _lastFocusedDraft = null;
+    }, 50);
+  }
+});
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (!t || !t.id) return;
+  let tech = null, field = null;
+  let m;
+  if ((m = t.id.match(/^ai_addr_(.+)$/))) { tech = m[1]; field = 'addr'; }
+  else if ((m = t.id.match(/^ai_(.+)$/))) { tech = m[1]; field = 'name'; }
+  if (!tech) return;
+  const cur = ticketDrafts[tech] || { name:'', addr:'' };
+  cur[field] = t.value;
+  if (!cur.name && !cur.addr) delete ticketDrafts[tech];
+  else ticketDrafts[tech] = cur;
+  // Update focus/caret snapshot so mid-word re-renders don't cost the caret
+  _lastFocusedDraft = { tech, field, selStart: t.selectionStart||0, selEnd: t.selectionEnd||0 };
+  saveDrafts();
+});
+// Clear a tech's draft after a successful add
+function clearTicketDraft(tech) {
+  delete ticketDrafts[tech];
+  saveDrafts();
+}
+
+// ════════════════════════════════════════════
+
+// ════════════════════════════════════════════
 //  RENDER — ADMIN VIEW
 // ════════════════════════════════════════════
 function render() { rLeg(); rBoard(); rSpecialCols(); }
@@ -1417,6 +1542,9 @@ function getFiltered() {
 }
 
 function rBoard() {
+  // Grab whatever the user has typed into ai_*/ai_addr_* inputs BEFORE we
+  // wipe the board via innerHTML — otherwise sync races destroy their work.
+  captureTicketDrafts();
   const fj = getFiltered();
   let h = '';
   const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : TECHS;
@@ -1449,6 +1577,8 @@ function rBoard() {
     h += `</div></div>`;
   });
   document.getElementById('board').innerHTML = h;
+  // Repopulate persisted drafts + refocus whatever input the user was in.
+  restoreTicketDrafts();
   if (canWrite) bindDrag();
 }
 
@@ -1545,9 +1675,10 @@ function addJFull(tech) {
     return;
   }
   const v = `${name}, ${addr}`;
-  // Clear inputs
+  // Clear inputs + drop the saved draft so it doesn't come back
   nameInp.value = '';
   addrInp.value = '';
+  clearTicketDraft(tech);
   const parsed = parseJob(v);
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
   let targetRow = null;
@@ -1567,7 +1698,7 @@ function addJFull(tech) {
 function addJ(tech) {
   if (!canWrite) return;
   const inp = document.getElementById('ai_'+tech), v = inp?.value.trim();
-  if (!v) return; inp.value='';
+  if (!v) return; inp.value=''; clearTicketDraft(tech);
   const parsed = parseJob(v);
   // Find first empty row
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
@@ -1736,10 +1867,10 @@ function chgColor(id, nc) {
 async function moveToQue(id) {
   const j = jobs.find(x=>x.id===id); if (!j) return;
   closeDD();
-  if (j.col === 11) { toast('Already in QUE'); return; }
+  if (j.col === QUE_COL) { toast('Already in QUE'); return; }
 
-  // Find next empty row in QUE column (col 11, rows 6-18)
-  const queJobs = jobs.filter(x => x.col === 11).map(x => x.row);
+  // Find next empty row in QUE column (rows 6-18)
+  const queJobs = jobs.filter(x => x.col === QUE_COL).map(x => x.row);
   let targetRow = null;
   for (let r = 6; r <= 18; r++) {
     if (!queJobs.includes(r)) { targetRow = r; break; }
@@ -1752,14 +1883,14 @@ async function moveToQue(id) {
   const srcRow = j.row, srcCol = j.col;
 
   // Optimistic: move in memory + render immediately for snappy UX
-  j.row = targetRow; j.col = 11; j.tech = 'QUE'; j.color = 'green';
+  j.row = targetRow; j.col = QUE_COL; j.tech = 'QUE'; j.color = 'green';
   render(); updateMap();
 
   isSaving = true;
   try {
     // Write new cell value + green background
-    await sheetsSetValue(targetRow, 11, cellVal);
-    await sheetsSetBackground(targetRow, 11, '#00ff00');
+    await sheetsSetValue(targetRow, QUE_COL, cellVal);
+    await sheetsSetBackground(targetRow, QUE_COL, '#00ff00');
     // Clear original
     await sheetsClear(srcRow, srcCol);
     toast(`Moved to QUE`);
@@ -1773,13 +1904,23 @@ async function moveToQue(id) {
 }
 
 // ── Search ──
-document.getElementById('sbox').oninput = e => {
+// Two search inputs in the DOM — the main one in the toolbar (#sbox) and a
+// second copy above the JP Review column (#sbox2). Both write to the same
+// `search` variable and mirror each other's value so results stay consistent
+// no matter which box the user is typing into.
+function _handleSearchInput(e) {
   search = e.target.value;
+  const other = e.target.id === 'sbox' ? document.getElementById('sbox2')
+                                       : document.getElementById('sbox');
+  if (other && other.value !== search) other.value = search;
   // Tuck vendor notes away while actively searching for a ticket
   notesSearchActive = !!search.trim();
   applyNotesCollapse();
   render();
-};
+}
+document.getElementById('sbox').oninput  = _handleSearchInput;
+const _sb2 = document.getElementById('sbox2');
+if (_sb2) _sb2.oninput = _handleSearchInput;
 
 // ── Vendor notes (hardcoded) ──
 function renderNotes() {
@@ -2753,6 +2894,8 @@ function setInstallAssignee(t) {
     else        installAssignees.push(t);
   }
   paintAssigneePicker();
+  // Assignee is part of the persisted draft — keep it in sync
+  saveInstallDraft();
 }
 
 function paintAssigneePicker() {
@@ -2851,6 +2994,8 @@ function openInstallDay(dateStr) {
     document.getElementById('installNotesInput').value = '';
     document.getElementById('installDateInput').value = dateStr;
     installAssignees = []; paintAssigneePicker();
+    // Restore any half-typed install the user abandoned last time
+    applyInstallDraft();
   }
 
   document.getElementById('installDayBg').style.display = 'flex';
@@ -2885,6 +3030,8 @@ function openInstallAdd() {
   document.getElementById('installNotesInput').value = '';
   document.getElementById('installDateInput').value = fmtDate(new Date());
   installAssignees = []; paintAssigneePicker();
+  // Restore any half-typed install the user abandoned last time
+  applyInstallDraft();
   document.getElementById('installDayBg').style.display = 'flex';
 }
 
@@ -2928,6 +3075,61 @@ function closeInstallDay() {
   installEditOldSlot = null;
 }
 
+// ── Installation form draft persistence ──
+// The install add-form used to lose whatever the user typed if a background
+// data refresh fired while the modal was open, or if they had to close/reload
+// mid-entry. We now auto-save the four fields to localStorage on every input
+// (add mode only — edit mode is anchored to an existing record) and rehydrate
+// them the next time the add form opens. Cleared on a successful submit.
+const INSTALL_DRAFT_KEY = 'wrsInstallDraft_v1';
+function loadInstallDraft() {
+  try { return JSON.parse(localStorage.getItem(INSTALL_DRAFT_KEY) || 'null'); }
+  catch(e) { return null; }
+}
+function saveInstallDraft() {
+  if (installPopupMode !== 'add') return;   // only autosave in add mode
+  const d = {
+    name:  document.getElementById('installNameInput').value,
+    addr:  document.getElementById('installAddrInput').value,
+    notes: document.getElementById('installNotesInput').value,
+    date:  document.getElementById('installDateInput').value,
+    tech:  installAssignees.slice(),
+  };
+  if (!d.name && !d.addr && !d.notes && !d.tech.length) {
+    try { localStorage.removeItem(INSTALL_DRAFT_KEY); } catch(e) {}
+    return;
+  }
+  try { localStorage.setItem(INSTALL_DRAFT_KEY, JSON.stringify(d)); } catch(e) {}
+}
+function clearInstallDraft() {
+  try { localStorage.removeItem(INSTALL_DRAFT_KEY); } catch(e) {}
+}
+function applyInstallDraft() {
+  if (installPopupMode !== 'add') return;
+  const d = loadInstallDraft(); if (!d) return;
+  // Only fill blank fields — never stomp values the openers already set
+  // (e.g. installDateInput pre-filled with the day-cell that was clicked).
+  const n = document.getElementById('installNameInput');
+  const a = document.getElementById('installAddrInput');
+  const nt = document.getElementById('installNotesInput');
+  const dt = document.getElementById('installDateInput');
+  if (n && !n.value  && d.name)  n.value  = d.name;
+  if (a && !a.value  && d.addr)  a.value  = d.addr;
+  if (nt && !nt.value && d.notes) nt.value = d.notes;
+  if (dt && !dt.value && d.date)  dt.value = d.date;
+  if (Array.isArray(d.tech) && d.tech.length && !installAssignees.length) {
+    installAssignees = d.tech.slice();
+    paintAssigneePicker();
+  }
+}
+// Wire input listeners once — fires on every keystroke inside the form.
+(function bindInstallDraftListeners(){
+  ['installNameInput','installAddrInput','installNotesInput','installDateInput'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', saveInstallDraft);
+  });
+})();
+
 async function submitInstall() {
   const name  = document.getElementById('installNameInput').value.trim();
   const addr  = document.getElementById('installAddrInput').value.trim();
@@ -2965,6 +3167,7 @@ async function submitInstall() {
       return;
     }
     toast(installPopupMode === 'edit' ? 'Install updated' : 'Install scheduled');
+    clearInstallDraft();   // saved successfully — throw away the in-progress copy
     closeInstallDay();
     await loadCalendarData();
     renderCalendar();
@@ -3512,7 +3715,7 @@ function getCoTechs(job) {
     if (o.id === job.id) return;
     if (o.tech === job.tech) return;            // same person
     if (o.color !== 'green') return;            // only active tickets
-    if (o.tech === 'QUE' || o.col === 11) return; // QUE isn't a person
+    if (o.tech === 'QUE' || o.col === QUE_COL) return; // QUE isn't a person
     if (SHOP.has(o.job)) return;                // shop check-ins aren't a shared site
     const oA = norm(o.address), oN = norm(o.job);
     const addrMatch = myA && oA && myA === oA;
@@ -3574,14 +3777,14 @@ async function writeHeartbeat() {
 
   try {
     if (isTech && curUser.tech) {
-      // Tech users: write into their column (A=1…K=11)
+      // Tech users: write into their column (A=1…L=12)
       const col = TECHS.indexOf(curUser.tech) + 1;
       if (col >= 1) await sheetsSetValue(HEARTBEAT_ROW, col, record);
     } else {
       // Non-tech users: pack all into col L as JSON blob keyed by SESSION_ID
       let existing = {};
       try {
-        const r = await sheetsGet(`Sheet1!L${HEARTBEAT_ROW}`);
+        const r = await sheetsGet(`Sheet1!M${HEARTBEAT_ROW}`);
         const raw = r.values?.[0]?.[0] || '';
         if (raw) existing = JSON.parse(raw);
       } catch(e) {}
@@ -3628,7 +3831,7 @@ let allActiveSessions = {};
 async function checkDuplicateLogins() {
   if (!curUser || curUser.role !== 'admin') return;
   try {
-    const resp = await sheetsGet(`Sheet1!A${HEARTBEAT_ROW}:L${HEARTBEAT_ROW}`);
+    const resp = await sheetsGet(`Sheet1!A${HEARTBEAT_ROW}:M${HEARTBEAT_ROW}`);
     const row = resp.values?.[0] || [];
     const cutoff = Date.now() - 2*60*1000;
 
@@ -3696,6 +3899,263 @@ function startHeartbeat() {
 // ════════════════════════════════════════════
 //  AUTO-REFRESH
 // ════════════════════════════════════════════
+
+// ── COMPRESSOR (admin-only Image/PDF tool) ──
+// The entire compressor.html file is embedded as base64 below so the tool
+// works even when only index.html is deployed. Decoded lazily on first open,
+// then handed to the iframe via a Blob URL (larger than data: URLs allow).
+const COMPRESSOR_B64_PARTS = [
+  "PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImVuIj4KPGhlYWQ+CjxtZXRhIGNoYXJzZXQ9IlVURi04Ij4KPG1ldGEgbmFtZT0i",
+  "dmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xLjAiPgo8dGl0bGU+SW1hZ2UgJiBQ",
+  "REYgQ29tcHJlc3NvcjwvdGl0bGU+CjxzY3JpcHQgc3JjPSJodHRwczovL2NkbmpzLmNsb3VkZmxhcmUuY29tL2FqYXgvbGlicy9w",
+  "ZGYuanMvMy4xMS4xNzQvcGRmLm1pbi5qcyI+PC9zY3JpcHQ+CjxzY3JpcHQgc3JjPSJodHRwczovL2NkbmpzLmNsb3VkZmxhcmUu",
+  "Y29tL2FqYXgvbGlicy9wZGYtbGliLzEuMTcuMS9wZGYtbGliLm1pbi5qcyI+PC9zY3JpcHQ+CjxzY3JpcHQgc3JjPSJodHRwczov",
+  "L2NkbmpzLmNsb3VkZmxhcmUuY29tL2FqYXgvbGlicy9qc3ppcC8zLjEwLjEvanN6aXAubWluLmpzIj48L3NjcmlwdD4KPHN0eWxl",
+  "PgogICogeyBib3gtc2l6aW5nOiBib3JkZXItYm94OyBtYXJnaW46IDA7IHBhZGRpbmc6IDA7IH0KICBib2R5IHsKICAgIGZvbnQt",
+  "ZmFtaWx5OiAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIFJvYm90bywgSGVsdmV0aWNhLCBB",
+  "cmlhbCwgc2Fucy1zZXJpZjsKICAgIGJhY2tncm91bmQ6ICMwZTExMTc7CiAgICBjb2xvcjogI2U0ZThlZTsKICAgIHBhZGRpbmc6",
+  "IDI4cHggMTZweCA2MHB4OwogICAgLXdlYmtpdC1mb250LXNtb290aGluZzogYW50aWFsaWFzZWQ7CiAgfQogIC53cmFwIHsgbWF4",
+  "LXdpZHRoOiA3NjBweDsgbWFyZ2luOiAwIGF1dG87IH0KICBoZWFkZXIgaDEgeyBmb250LXNpemU6IDI2cHg7IGZvbnQtd2VpZ2h0",
+  "OiA3MDA7IGxldHRlci1zcGFjaW5nOiAtMC40cHg7IGNvbG9yOiAjZjJmNWY5OyB9CiAgaGVhZGVyIHAgeyBjb2xvcjogIzhiOTVh",
+  "NTsgbWFyZ2luLXRvcDogNnB4OyBmb250LXNpemU6IDE0cHg7IH0KICAucGFuZWwgewogICAgYmFja2dyb3VuZDogIzE2MWIyNDsg",
+  "Ym9yZGVyOiAxcHggc29saWQgIzI0MmMzYTsgYm9yZGVyLXJhZGl1czogMTRweDsKICAgIHBhZGRpbmc6IDE4cHg7IG1hcmdpbi10",
+  "b3A6IDE4cHg7IGJveC1zaGFkb3c6IDAgMnB4IDhweCByZ2JhKDAsMCwwLDAuMjUpOwogIH0KICAudGFyZ2V0cyB7IGRpc3BsYXk6",
+  "IGZsZXg7IGdhcDogMTZweDsgYWxpZ24taXRlbXM6IGZsZXgtZW5kOyBmbGV4LXdyYXA6IHdyYXA7IH0KICAudGFyZ2V0cyAuZmll",
+  "bGQgeyBkaXNwbGF5OiBmbGV4OyBmbGV4LWRpcmVjdGlvbjogY29sdW1uOyBnYXA6IDVweDsgfQogIC50YXJnZXRzIGxhYmVsIHsg",
+  "Zm9udC1zaXplOiAxMnB4OyBmb250LXdlaWdodDogNjAwOyBjb2xvcjogIzhiOTVhNTsgdGV4dC10cmFuc2Zvcm06IHVwcGVyY2Fz",
+  "ZTsgbGV0dGVyLXNwYWNpbmc6IDAuNHB4OyB9CiAgLnRhcmdldHMgaW5wdXQgewogICAgd2lkdGg6IDExMHB4OyBwYWRkaW5nOiA5",
+  "cHggMTFweDsgYm9yZGVyOiAxcHggc29saWQgIzJlMzg0ODsgYm9yZGVyLXJhZGl1czogOXB4OwogICAgZm9udC1zaXplOiAxNXB4",
+  "OyBmb250LXdlaWdodDogNjAwOyBjb2xvcjogI2U0ZThlZTsgYmFja2dyb3VuZDogIzBlMTExNzsgb3V0bGluZTogbm9uZTsKICB9",
+  "CiAgLnRhcmdldHMgaW5wdXQ6Zm9jdXMgeyBib3JkZXItY29sb3I6ICMzYjgyZjY7IGJveC1zaGFkb3c6IDAgMCAwIDNweCByZ2Jh",
+  "KDU5LDEzMCwyNDYsMC4yKTsgfQogIC50YXJnZXRzIC5oaW50IHsgZm9udC1zaXplOiAxMnB4OyBjb2xvcjogIzZiNzU4NTsgcGFk",
+  "ZGluZy1ib3R0b206IDlweDsgZmxleDogMTsgbWluLXdpZHRoOiAxNDBweDsgfQogIC50YXJnZXRzIC5oaW50IGIgeyBjb2xvcjog",
+  "IzlhYTViNjsgfQogIC5kcm9wIHsKICAgIG1hcmdpbi10b3A6IDE4cHg7IGJvcmRlcjogMnB4IGRhc2hlZCAjMmUzODQ4OyBib3Jk",
+  "ZXItcmFkaXVzOiAxNHB4OwogICAgcGFkZGluZzogMzhweCAyMHB4OyB0ZXh0LWFsaWduOiBjZW50ZXI7IGN1cnNvcjogcG9pbnRl",
+  "cjsKICAgIHRyYW5zaXRpb246IGFsbCAuMTVzIGVhc2U7IGJhY2tncm91bmQ6ICMxMTE2MWU7CiAgfQogIC5kcm9wOmhvdmVyIHsg",
+  "Ym9yZGVyLWNvbG9yOiAjM2I4MmY2OyBiYWNrZ3JvdW5kOiAjMTQxYjI3OyB9CiAgLmRyb3Aub3ZlciB7IGJvcmRlci1jb2xvcjog",
+  "IzNiODJmNjsgYmFja2dyb3VuZDogIzE2MjAyZjsgdHJhbnNmb3JtOiBzY2FsZSgxLjAwNSk7IH0KICAuZHJvcCAuaWMgeyBmb250",
+  "LXNpemU6IDM4cHg7IH0KICAuZHJvcCAuYmlnIHsgZm9udC1zaXplOiAxNnB4OyBmb250LXdlaWdodDogNjAwOyBtYXJnaW4tdG9w",
+  "OiA4cHg7IGNvbG9yOiAjZTRlOGVlOyB9CiAgLmRyb3AgLnN1YiB7IGZvbnQtc2l6ZTogMTNweDsgY29sb3I6ICM2Yjc1ODU7IG1h",
+  "cmdpbi10b3A6IDRweDsgfQogIC5maWxlcyB7IG1hcmdpbi10b3A6IDE4cHg7IGRpc3BsYXk6IGZsZXg7IGZsZXgtZGlyZWN0aW9u",
+  "OiBjb2x1bW47IGdhcDogMTJweDsgfQogIC5jYXJkIHsKICAgIGJhY2tncm91bmQ6ICMxNjFiMjQ7IGJvcmRlcjogMXB4IHNvbGlk",
+  "ICMyNDJjM2E7IGJvcmRlci1yYWRpdXM6IDEycHg7CiAgICBwYWRkaW5nOiAxNHB4IDE2cHg7IGRpc3BsYXk6IGZsZXg7IGFsaWdu",
+  "LWl0ZW1zOiBjZW50ZXI7IGdhcDogMTRweDsKICB9CiAgLmNhcmQgLmZpY29uIHsKICAgIHdpZHRoOiA0MnB4OyBoZWlnaHQ6IDQy",
+  "cHg7IGZsZXg6IDAgMCA0MnB4OyBib3JkZXItcmFkaXVzOiA5cHg7CiAgICBkaXNwbGF5OiBmbGV4OyBhbGlnbi1pdGVtczogY2Vu",
+  "dGVyOyBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjsgZm9udC1zaXplOiAyMHB4OwogICAgYmFja2dyb3VuZDogIzFlMjUzMjsKICB9",
+  "CiAgLmNhcmQgLmluZm8geyBmbGV4OiAxOyBtaW4td2lkdGg6IDA7IH0KICAuY2FyZCAubmFtZSB7IGZvbnQtd2VpZ2h0OiA2MDA7",
+  "IGZvbnQtc2l6ZTogMTRweDsgY29sb3I6ICNlNGU4ZWU7IHdoaXRlLXNwYWNlOiBub3dyYXA7IG92ZXJmbG93OiBoaWRkZW47IHRl",
+  "eHQtb3ZlcmZsb3c6IGVsbGlwc2lzOyB9CiAgLmNhcmQgLm1ldGEgeyBmb250LXNpemU6IDEzcHg7IGNvbG9yOiAjOGI5NWE1OyBt",
+  "YXJnaW4tdG9wOiAzcHg7IH0KICAuY2FyZCAubWV0YSAuYXJyb3cgeyBjb2xvcjogIzViNjU3NjsgbWFyZ2luOiAwIDZweDsgfQog",
+  "IC5jYXJkIC5uZXcgeyBmb250LXdlaWdodDogNzAwOyB9CiAgLm9rIHsgY29sb3I6ICM0YWRlODA7IH0KICAud2FybiB7IGNvbG9y",
+  "OiAjZmJiZjI0OyB9CiAgLmVyciB7IGNvbG9yOiAjZmI3MTg1OyB9CiAgLmJhciB7IGhlaWdodDogNXB4OyBiYWNrZ3JvdW5kOiAj",
+  "MWUyNTMyOyBib3JkZXItcmFkaXVzOiAzcHg7IG92ZXJmbG93OiBoaWRkZW47IG1hcmdpbi10b3A6IDhweDsgfQogIC5iYXIgPiBk",
+  "aXYgeyBoZWlnaHQ6IDEwMCU7IHdpZHRoOiAwJTsgYmFja2dyb3VuZDogIzNiODJmNjsgdHJhbnNpdGlvbjogd2lkdGggLjJzIGVh",
+  "c2U7IH0KICAuZGwgewogICAgZmxleDogMCAwIGF1dG87IGJvcmRlcjogbm9uZTsgYmFja2dyb3VuZDogIzI1NjNlYjsgY29sb3I6",
+  "ICNmZmY7CiAgICBwYWRkaW5nOiA5cHggMTVweDsgYm9yZGVyLXJhZGl1czogOXB4OyBmb250LXNpemU6IDEzcHg7IGZvbnQtd2Vp",
+  "Z2h0OiA2MDA7CiAgICBjdXJzb3I6IHBvaW50ZXI7IHRyYW5zaXRpb246IGJhY2tncm91bmQgLjE1czsKICB9CiAgLmRsOmhvdmVy",
+  "IHsgYmFja2dyb3VuZDogIzFkNGVkODsgfQogIC5kbDpkaXNhYmxlZCB7IGJhY2tncm91bmQ6ICMyYTMzNDQ7IGNvbG9yOiAjNmI3",
+  "NTg1OyBjdXJzb3I6IGRlZmF1bHQ7IH0KICAuYWN0aW9ucyB7IG1hcmdpbi10b3A6IDE2cHg7IGRpc3BsYXk6IGZsZXg7IGdhcDog",
+  "MTBweDsgYWxpZ24taXRlbXM6IGNlbnRlcjsgZmxleC13cmFwOiB3cmFwOyB9CiAgI3ppcE5hbWUgewogICAgcGFkZGluZzogMTBw",
+  "eCAxM3B4OyBib3JkZXI6IDFweCBzb2xpZCAjMmUzODQ4OyBib3JkZXItcmFkaXVzOiAxMHB4OwogICAgZm9udC1zaXplOiAxNHB4",
+  "OyBmb250LXdlaWdodDogNjAwOyBjb2xvcjogI2U0ZThlZTsgYmFja2dyb3VuZDogIzBlMTExNzsgb3V0bGluZTogbm9uZTsgbWlu",
+  "LXdpZHRoOiAxNzBweDsKICB9CiAgI3ppcE5hbWU6OnBsYWNlaG9sZGVyIHsgY29sb3I6ICM1YjY1NzY7IH0KICAjemlwTmFtZTpm",
+  "b2N1cyB7IGJvcmRlci1jb2xvcjogIzNiODJmNjsgYm94LXNoYWRvdzogMCAwIDAgM3B4IHJnYmEoNTksMTMwLDI0NiwwLjIpOyB9",
+  "CiAgLmJ0bi1hbGwgewogICAgYm9yZGVyOiBub25lOyBiYWNrZ3JvdW5kOiAjMTZhMzRhOyBjb2xvcjogI2ZmZjsgcGFkZGluZzog",
+  "MTFweCAxOHB4OwogICAgYm9yZGVyLXJhZGl1czogMTBweDsgZm9udC13ZWlnaHQ6IDYwMDsgZm9udC1zaXplOiAxNHB4OyBjdXJz",
+  "b3I6IHBvaW50ZXI7CiAgfQogIC5idG4tYWxsOmhvdmVyIHsgYmFja2dyb3VuZDogIzE1ODAzZDsgfQogIC5idG4tYWxsOmRpc2Fi",
+  "bGVkIHsgYmFja2dyb3VuZDogIzJhMzM0NDsgY29sb3I6ICM2Yjc1ODU7IGN1cnNvcjogZGVmYXVsdDsgfQogIC5idG4tY2xlYXIg",
+  "ewogICAgYm9yZGVyOiAxcHggc29saWQgIzJlMzg0ODsgYmFja2dyb3VuZDogIzE2MWIyNDsgY29sb3I6ICM5YWE1YjY7CiAgICBw",
+  "YWRkaW5nOiAxMXB4IDE2cHg7IGJvcmRlci1yYWRpdXM6IDEwcHg7IGZvbnQtd2VpZ2h0OiA2MDA7IGZvbnQtc2l6ZTogMTRweDsg",
+  "Y3Vyc29yOiBwb2ludGVyOwogIH0KICAuYnRuLWNsZWFyOmhvdmVyIHsgYmFja2dyb3VuZDogIzFlMjUzMjsgfQogIC5ub3RlIHsg",
+  "Zm9udC1zaXplOiAxMi41cHg7IGNvbG9yOiAjNmI3NTg1OyBtYXJnaW4tdG9wOiAyMnB4OyBsaW5lLWhlaWdodDogMS41NTsgfQog",
+  "IC5ub3RlIGIgeyBjb2xvcjogIzlhYTViNjsgfQo8L3N0eWxlPgo8L2hlYWQ+Cjxib2R5Pgo8ZGl2IGNsYXNzPSJ3cmFwIj4KICA8",
+  "aGVhZGVyPgogICAgPGgxPkltYWdlICZhbXA7IFBERiBDb21wcmVzc29yPC9oMT4KICAgIDxwPkRyb3AgZmlsZXMgaW4sIGdldCB0",
+  "aGVtIHNxdWVlemVkIGludG8geW91ciB0YXJnZXQgc2l6ZS4gRXZlcnl0aGluZyBydW5zIGxvY2FsbHkgaW4geW91ciBicm93c2Vy",
+  "IOKAlCBub3RoaW5nIGlzIHVwbG9hZGVkLjwvcD4KICA8L2hlYWRlcj4KCiAgPGRpdiBjbGFzcz0icGFuZWwiPgogICAgPGRpdiBj",
+  "bGFzcz0idGFyZ2V0cyI+CiAgICAgIDxkaXYgY2xhc3M9ImZpZWxkIj4KICAgICAgICA8bGFiZWw+TWluIHNpemU8L2xhYmVsPgog",
+  "ICAgICAgIDxpbnB1dCB0eXBlPSJudW1iZXIiIGlkPSJtaW5LYiIgdmFsdWU9Ijc1MCIgbWluPSIxMCIgc3RlcD0iMTAiPiAKICAg",
+  "ICAgPC9kaXY+CiAgICAgIDxkaXYgY2xhc3M9ImZpZWxkIj4KICAgICAgICA8bGFiZWw+TWF4IHNpemU8L2xhYmVsPgogICAgICAg",
+  "IDxpbnB1dCB0eXBlPSJudW1iZXIiIGlkPSJtYXhLYiIgdmFsdWU9IjEwMDAiIG1pbj0iMjAiIHN0ZXA9IjEwIj4KICAgICAgPC9k",
+  "aXY+CiAgICAgIDxkaXYgY2xhc3M9ImhpbnQiPlZhbHVlcyBpbiA8Yj5LQjwvYj4uIFRoZSB0b29sIGFpbXMgZm9yIHRoZSBoaWdo",
+  "ZXN0IHF1YWxpdHkgdGhhdCBzdGF5cyB1bmRlciB0aGUgbWF4LiBGaWxlcyBhbHJlYWR5IHVuZGVyIHRoZSBtYXggYXJlIGxlZnQg",
+  "dW50b3VjaGVkLjwvZGl2PgogICAgPC9kaXY+CgogICAgPGRpdiBjbGFzcz0iZHJvcCIgaWQ9ImRyb3AiPgogICAgICA8ZGl2IGNs",
+  "YXNzPSJpYyI+4qyG77iPPC9kaXY+CiAgICAgIDxkaXYgY2xhc3M9ImJpZyI+RHJvcCBpbWFnZXMgb3IgUERGcyBoZXJlPC9kaXY+",
+  "CiAgICAgIDxkaXYgY2xhc3M9InN1YiI+b3IgY2xpY2sgdG8gYnJvd3NlIOKAlCBKUEcsIFBORywgV2ViUCwgUERGIMK3IG11bHRp",
+  "cGxlIGZpbGVzIE9LPC9kaXY+CiAgICA8L2Rpdj4KICAgIDxpbnB1dCB0eXBlPSJmaWxlIiBpZD0icGlja2VyIiBhY2NlcHQ9Imlt",
+  "YWdlLyosYXBwbGljYXRpb24vcGRmIiBtdWx0aXBsZSBzdHlsZT0iZGlzcGxheTpub25lIj4KICA8L2Rpdj4KCiAgPGRpdiBjbGFz",
+  "cz0iZmlsZXMiIGlkPSJmaWxlcyI+PC9kaXY+CgogIDxkaXYgY2xhc3M9ImFjdGlvbnMiIGlkPSJhY3Rpb25zIiBzdHlsZT0iZGlz",
+  "cGxheTpub25lIj4KICAgIDxpbnB1dCB0eXBlPSJ0ZXh0IiBpZD0iemlwTmFtZSIgcGxhY2Vob2xkZXI9ImFyY2hpdmUgbmFtZSIg",
+  "dmFsdWU9ImNvbXByZXNzZWQtZmlsZXMiPgogICAgPGJ1dHRvbiBjbGFzcz0iYnRuLWFsbCIgaWQ9ImRsQWxsIj7irIcgRG93bmxv",
+  "YWQgYWxsICguemlwKTwvYnV0dG9uPgogICAgPGJ1dHRvbiBjbGFzcz0iYnRuLWNsZWFyIiBpZD0iY2xlYXIiPkNsZWFyPC9idXR0",
+  "b24+CiAgPC9kaXY+CgogIDxkaXYgY2xhc3M9Im5vdGUiPgogICAgPGI+SG93IGl0IHdvcmtzLjwvYj4gSW1hZ2VzIGFyZSByZS1l",
+  "bmNvZGVkIGFzIEpQRUcgd2l0aCBxdWFsaXR5IGF1dG8tdHVuZWQgdG8gbGFuZCBqdXN0IHVuZGVyIHlvdXIgbWF4LCBkb3duc2Nh",
+  "bGluZyBvbmx5IGlmIG5lZWRlZC4KICAgIFBERnMgYXJlIGNvbXByZXNzZWQgYnkgcmFzdGVyaXppbmcgZWFjaCBwYWdlIOKAlCBy",
+  "ZWxpYWJsZSBmb3IgaGl0dGluZyBhIHNpemUgY2FwLCBidXQgPGI+dGV4dCBpbiB0aGUgb3V0cHV0IGJlY29tZXMgbm9uLXNlbGVj",
+  "dGFibGU8L2I+IChpdCdzIGEgZmxhdHRlbmVkIGltYWdlIFBERikuIEJlc3QgZm9yIHNjYW5uZWQgb3IgaW1hZ2UtaGVhdnkgZG9j",
+  "dW1lbnRzLgogICAgTm90aGluZyBsZWF2ZXMgeW91ciBkZXZpY2UuCiAgPC9kaXY+CjwvZGl2PgoKPHNjcmlwdD4KICBwZGZqc0xp",
+  "Yi5HbG9iYWxXb3JrZXJPcHRpb25zLndvcmtlclNyYyA9ICJodHRwczovL2NkbmpzLmNsb3VkZmxhcmUuY29tL2FqYXgvbGlicy9w",
+  "ZGYuanMvMy4xMS4xNzQvcGRmLndvcmtlci5taW4uanMiOwoKICBjb25zdCBkcm9wID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQo",
+  "J2Ryb3AnKTsKICBjb25zdCBwaWNrZXIgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgncGlja2VyJyk7CiAgY29uc3QgZmlsZXNF",
+  "bCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdmaWxlcycpOwogIGNvbnN0IGFjdGlvbnMgPSBkb2N1bWVudC5nZXRFbGVtZW50",
+  "QnlJZCgnYWN0aW9ucycpOwogIGNvbnN0IHJlc3VsdHMgPSBbXTsgLy8ge25hbWUsIGJsb2IsIGNhcmR9CgogIC8vIC0tLS0tLS0t",
+  "LS0gaGVscGVycyAtLS0tLS0tLS0tCiAgZnVuY3Rpb24gZm10KGJ5dGVzKXsKICAgIGlmIChieXRlcyA8IDEwMjQpIHJldHVybiBi",
+  "eXRlcyArICcgQic7CiAgICBpZiAoYnl0ZXMgPCAxMDI0KjEwMjQpIHJldHVybiAoYnl0ZXMvMTAyNCkudG9GaXhlZCgwKSArICcg",
+  "S0InOwogICAgcmV0dXJuIChieXRlcy8oMTAyNCoxMDI0KSkudG9GaXhlZCgyKSArICcgTUInOwogIH0KICBmdW5jdGlvbiBjYW52",
+  "YXNUb0Jsb2IoY2FudmFzLCBxKXsKICAgIHJldHVybiBuZXcgUHJvbWlzZShyZXMgPT4gY2FudmFzLnRvQmxvYihiID0+IHJlcyhi",
+  "KSwgJ2ltYWdlL2pwZWcnLCBxKSk7CiAgfQogIGZ1bmN0aW9uIGxvYWRJbWFnZShmaWxlKXsKICAgIHJldHVybiBuZXcgUHJvbWlz",
+  "ZSgocmVzLCByZWopID0+IHsKICAgICAgY29uc3QgdSA9IFVSTC5jcmVhdGVPYmplY3RVUkwoZmlsZSk7CiAgICAgIGNvbnN0IGkg",
+  "PSBuZXcgSW1hZ2UoKTsKICAgICAgaS5vbmxvYWQgPSAoKSA9PiB7IFVSTC5yZXZva2VPYmplY3RVUkwodSk7IHJlcyhpKTsgfTsK",
+  "ICAgICAgaS5vbmVycm9yID0gKCkgPT4geyBVUkwucmV2b2tlT2JqZWN0VVJMKHUpOyByZWoobmV3IEVycm9yKCdDb3VsZCBub3Qg",
+  "cmVhZCBpbWFnZScpKTsgfTsKICAgICAgaS5zcmMgPSB1OwogICAgfSk7CiAgfQogIGZ1bmN0aW9uIGRyYXdDYW52YXMoaW1nLCB3",
+  "LCBoKXsKICAgIGNvbnN0IGMgPSBkb2N1bWVudC5jcmVhdGVFbGVtZW50KCdjYW52YXMnKTsKICAgIGMud2lkdGggPSB3OyBjLmhl",
+  "aWdodCA9IGg7CiAgICBjb25zdCBjdHggPSBjLmdldENvbnRleHQoJzJkJyk7CiAgICBjdHguZmlsbFN0eWxlID0gJyNmZmYnOyBj",
+  "dHguZmlsbFJlY3QoMCwwLHcsaCk7CiAgICBjdHguZHJhd0ltYWdlKGltZywgMCwgMCwgdywgaCk7CiAgICByZXR1cm4gYzsKICB9",
+  "CiAgZnVuY3Rpb24gYmFzZU5hbWUobmFtZSl7IHJldHVybiBuYW1lLnJlcGxhY2UoL1wuW14uXSskLywgJycpOyB9CgogIC8vIC0t",
+  "LS0tLS0tLS0gaW1hZ2UgY29tcHJlc3Npb24gLS0tLS0tLS0tLQogIGFzeW5jIGZ1bmN0aW9uIGNvbXByZXNzSW1hZ2UoZmlsZSwg",
+  "bWluQiwgbWF4Qiwgb25Qcm9nKXsKICAgIGlmIChmaWxlLnNpemUgPD0gbWF4QikgcmV0dXJuIHsgYmxvYjogZmlsZSwgbm90ZTog",
+  "J2FscmVhZHkgd2l0aGluIHRhcmdldCcsIGNoYW5nZWQ6IGZhbHNlLCBleHQ6IGZpbGUubmFtZS5zcGxpdCgnLicpLnBvcCgpIH07",
+  "CiAgICBjb25zdCBpbWcgPSBhd2FpdCBsb2FkSW1hZ2UoZmlsZSk7CiAgICBsZXQgc2NhbGUgPSAxLCBsYXN0U21hbGxlc3QgPSBu",
+  "dWxsOwogICAgZm9yIChsZXQgcyA9IDA7IHMgPCA4OyBzKyspewogICAgICBjb25zdCB3ID0gTWF0aC5tYXgoMSwgTWF0aC5yb3Vu",
+  "ZChpbWcubmF0dXJhbFdpZHRoICogc2NhbGUpKTsKICAgICAgY29uc3QgaCA9IE1hdGgubWF4KDEsIE1hdGgucm91bmQoaW1nLm5h",
+  "dHVyYWxIZWlnaHQgKiBzY2FsZSkpOwogICAgICBjb25zdCBjYW52YXMgPSBkcmF3Q2FudmFzKGltZywgdywgaCk7CiAgICAgIGxl",
+  "dCBsbyA9IDAuMDUsIGhpID0gMC45NSwgYmVzdFVuZGVyID0gbnVsbCwgc21hbGxlc3QgPSBudWxsOwogICAgICBmb3IgKGxldCBp",
+  "ID0gMDsgaSA8IDg7IGkrKyl7CiAgICAgICAgY29uc3QgcSA9IChsbyArIGhpKSAvIDI7CiAgICAgICAgY29uc3QgYmxvYiA9IGF3",
+  "YWl0IGNhbnZhc1RvQmxvYihjYW52YXMsIHEpOwogICAgICAgIGlmICghc21hbGxlc3QgfHwgYmxvYi5zaXplIDwgc21hbGxlc3Qu",
+  "c2l6ZSkgc21hbGxlc3QgPSBibG9iOwogICAgICAgIGlmIChibG9iLnNpemUgPD0gbWF4Qil7IGJlc3RVbmRlciA9IGJsb2I7IGxv",
+  "ID0gcTsgfSBlbHNlIHsgaGkgPSBxOyB9CiAgICAgIH0KICAgICAgb25Qcm9nICYmIG9uUHJvZygocyArIDEpIC8gOCk7CiAgICAg",
+  "IGlmIChiZXN0VW5kZXIpewogICAgICAgIGNvbnN0IG5vdGUgPSBiZXN0VW5kZXIuc2l6ZSA8IG1pbkIgPyAnYmVsb3cgbWluIOKA",
+  "lCBhbHJlYWR5IGNvbXBhY3QgYXQgZnVsbCBxdWFsaXR5JyA6IG51bGw7CiAgICAgICAgcmV0dXJuIHsgYmxvYjogYmVzdFVuZGVy",
+  "LCBjaGFuZ2VkOiB0cnVlLCBub3RlLCBleHQ6ICdqcGcnIH07CiAgICAgIH0KICAgICAgbGFzdFNtYWxsZXN0ID0gc21hbGxlc3Q7",
+  "CiAgICAgIHNjYWxlICo9IDAuODsgLy8gdG9vIGJpZyBldmVuIGF0IGxvd2VzdCBxdWFsaXR5IOKAlCBzaHJpbmsgZGltZW5zaW9u",
+  "cyBhbmQgcmV0cnkKICAgIH0KICAgIHJldHVybiB7IGJsb2I6IGxhc3RTbWFsbGVzdCwgY2hhbmdlZDogdHJ1ZSwgbm90ZTogJ2Nv",
+  "bXByZXNzZWQgdG8gZmVhc2libGUgbWluaW11bScsIGV4dDogJ2pwZycgfTsKICB9CgogIC8vIC0tLS0tLS0tLS0gcGRmIGNvbXBy",
+  "ZXNzaW9uIC0tLS0tLS0tLS0KICBhc3luYyBmdW5jdGlvbiBidWlsZFBkZihqcGVnQmxvYnMsIGRpbXMpewogICAgY29uc3QgZG9j",
+  "ID0gYXdhaXQgUERGTGliLlBERkRvY3VtZW50LmNyZWF0ZSgpOwogICAgZm9yIChsZXQgaSA9IDA7IGkgPCBqcGVnQmxvYnMubGVu",
+  "Z3RoOyBpKyspewogICAgICBjb25zdCBieXRlcyA9IG5ldyBVaW50OEFycmF5KGF3YWl0IGpwZWdCbG9ic1tpXS5hcnJheUJ1ZmZl",
+  "cigpKTsKICAgICAgY29uc3QgaW1nID0gYXdhaXQgZG9jLmVtYmVkSnBnKGJ5dGVzKTsKICAgICAgY29uc3QgcGFnZSA9IGRvYy5h",
+  "ZGRQYWdlKFtkaW1zW2ldLncsIGRpbXNbaV0uaF0pOwogICAgICBwYWdlLmRyYXdJbWFnZShpbWcsIHsgeDogMCwgeTogMCwgd2lk",
+  "dGg6IGRpbXNbaV0udywgaGVpZ2h0OiBkaW1zW2ldLmggfSk7CiAgICB9CiAgICBjb25zdCBvdXQgPSBhd2FpdCBkb2Muc2F2ZSgp",
+  "OwogICAgcmV0dXJuIG5ldyBCbG9iKFtvdXRdLCB7IHR5cGU6ICdhcHBsaWNhdGlvbi9wZGYnIH0pOwogIH0KCiAgYXN5bmMgZnVu",
+  "Y3Rpb24gY29tcHJlc3NQZGYoZmlsZSwgbWluQiwgbWF4Qiwgb25Qcm9nKXsKICAgIGlmIChmaWxlLnNpemUgPD0gbWF4QikgcmV0",
+  "dXJuIHsgYmxvYjogZmlsZSwgbm90ZTogJ2FscmVhZHkgd2l0aGluIHRhcmdldCcsIGNoYW5nZWQ6IGZhbHNlLCBleHQ6ICdwZGYn",
+  "IH07CiAgICBjb25zdCBidWYgPSBhd2FpdCBmaWxlLmFycmF5QnVmZmVyKCk7CiAgICBjb25zdCBwZGYgPSBhd2FpdCBwZGZqc0xp",
+  "Yi5nZXREb2N1bWVudCh7IGRhdGE6IGJ1ZiB9KS5wcm9taXNlOwogICAgY29uc3QgbiA9IHBkZi5udW1QYWdlczsKICAgIGxldCBz",
+  "Y2FsZSA9IDIuMCwgZmFsbGJhY2sgPSBudWxsOwoKICAgIGZvciAobGV0IHMgPSAwOyBzIDwgNTsgcysrKXsKICAgICAgY29uc3Qg",
+  "Y2FudmFzZXMgPSBbXSwgZGltcyA9IFtdOwogICAgICBmb3IgKGxldCBwID0gMTsgcCA8PSBuOyBwKyspewogICAgICAgIGNvbnN0",
+  "IHBhZ2UgPSBhd2FpdCBwZGYuZ2V0UGFnZShwKTsKICAgICAgICBjb25zdCB2cCA9IHBhZ2UuZ2V0Vmlld3BvcnQoeyBzY2FsZSB9",
+  "KTsKICAgICAgICBjb25zdCBjID0gZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnY2FudmFzJyk7CiAgICAgICAgYy53aWR0aCA9IE1h",
+  "dGguY2VpbCh2cC53aWR0aCk7IGMuaGVpZ2h0ID0gTWF0aC5jZWlsKHZwLmhlaWdodCk7CiAgICAgICAgY29uc3QgY3R4ID0gYy5n",
+  "ZXRDb250ZXh0KCcyZCcpOwogICAgICAgIGN0eC5maWxsU3R5bGUgPSAnI2ZmZic7IGN0eC5maWxsUmVjdCgwLDAsYy53aWR0aCxj",
+  "LmhlaWdodCk7CiAgICAgICAgYXdhaXQgcGFnZS5yZW5kZXIoeyBjYW52YXNDb250ZXh0OiBjdHgsIHZpZXdwb3J0OiB2cCB9KS5w",
+  "cm9taXNlOwogICAgICAgIGNhbnZhc2VzLnB1c2goYyk7IGRpbXMucHVzaCh7IHc6IGMud2lkdGgsIGg6IGMuaGVpZ2h0IH0pOwog",
+  "ICAgICAgIG9uUHJvZyAmJiBvblByb2coKChwIC8gbikgKiAwLjU1KSArIHMqMC4wMDEpOwogICAgICB9CiAgICAgIGFzeW5jIGZ1",
+  "bmN0aW9uIHRvdGFsQXQocSl7CiAgICAgICAgbGV0IHRvdGFsID0gMDsgY29uc3QgYmxvYnMgPSBbXTsKICAgICAgICBmb3IgKGNv",
+  "bnN0IGMgb2YgY2FudmFzZXMpeyBjb25zdCBiID0gYXdhaXQgY2FudmFzVG9CbG9iKGMsIHEpOyBibG9icy5wdXNoKGIpOyB0b3Rh",
+  "bCArPSBiLnNpemU7IH0KICAgICAgICByZXR1cm4geyB0b3RhbCwgYmxvYnMgfTsKICAgICAgfQogICAgICBsZXQgbG8gPSAwLjA1",
+  "LCBoaSA9IDAuOSwgYmVzdCA9IG51bGw7CiAgICAgIGZvciAobGV0IGkgPSAwOyBpIDwgNzsgaSsrKXsKICAgICAgICBjb25zdCBx",
+  "ID0gKGxvICsgaGkpIC8gMjsKICAgICAgICBjb25zdCB7IHRvdGFsLCBibG9icyB9ID0gYXdhaXQgdG90YWxBdChxKTsKICAgICAg",
+  "ICBpZiAoIWZhbGxiYWNrKSBmYWxsYmFjayA9IHsgYmxvYnMsIGRpbXMgfTsKICAgICAgICBpZiAodG90YWwgPD0gbWF4Qil7IGJl",
+  "c3QgPSB7IGJsb2JzIH07IGxvID0gcTsgfSBlbHNlIGhpID0gcTsKICAgICAgICBvblByb2cgJiYgb25Qcm9nKDAuNTUgKyAoKGkg",
+  "KyAxKSAvIDcpICogMC40KTsKICAgICAgfQogICAgICBpZiAoYmVzdCl7CiAgICAgICAgY29uc3Qgb3V0ID0gYXdhaXQgYnVpbGRQ",
+  "ZGYoYmVzdC5ibG9icywgZGltcyk7CiAgICAgICAgcmV0dXJuIHsgYmxvYjogb3V0LCBjaGFuZ2VkOiB0cnVlLCBub3RlOiAncmFz",
+  "dGVyaXplZCDigJQgdGV4dCBub3Qgc2VsZWN0YWJsZScsIGV4dDogJ3BkZicgfTsKICAgICAgfQogICAgICBmYWxsYmFjayA9IGF3",
+  "YWl0IChhc3luYyAoKSA9PiB7IGNvbnN0IHsgYmxvYnMgfSA9IGF3YWl0IHRvdGFsQXQoMC4wNSk7IHJldHVybiB7IGJsb2JzLCBk",
+  "aW1zIH07IH0pKCk7CiAgICAgIHNjYWxlICo9IDAuNzI7IC8vIHJlZHVjZSByZXNvbHV0aW9uIGFuZCByZXRyeQogICAgfQogICAg",
+  "Y29uc3Qgb3V0ID0gYXdhaXQgYnVpbGRQZGYoZmFsbGJhY2suYmxvYnMsIGZhbGxiYWNrLmRpbXMpOwogICAgcmV0dXJuIHsgYmxv",
+  "Yjogb3V0LCBjaGFuZ2VkOiB0cnVlLCBub3RlOiAiY291bGRuJ3QgZnVsbHkgcmVhY2ggdGFyZ2V0IOKAlCBtYXggY29tcHJlc3Np",
+  "b24gYXBwbGllZCIsIGV4dDogJ3BkZicgfTsKICB9CgogIC8vIC0tLS0tLS0tLS0gVUkgLyBvcmNoZXN0cmF0aW9uIC0tLS0tLS0t",
+  "LS0KICBmdW5jdGlvbiBtYWtlQ2FyZChmaWxlKXsKICAgIGNvbnN0IGNhcmQgPSBkb2N1bWVudC5jcmVhdGVFbGVtZW50KCdkaXYn",
+  "KTsKICAgIGNhcmQuY2xhc3NOYW1lID0gJ2NhcmQnOwogICAgY29uc3QgaXNQZGYgPSBmaWxlLnR5cGUgPT09ICdhcHBsaWNhdGlv",
+  "bi9wZGYnIHx8IC9cLnBkZiQvaS50ZXN0KGZpbGUubmFtZSk7CiAgICBjYXJkLmlubmVySFRNTCA9IGAKICAgICAgPGRpdiBjbGFz",
+  "cz0iZmljb24iPiR7aXNQZGYgPyAn8J+ThCcgOiAn8J+WvO+4jyd9PC9kaXY+CiAgICAgIDxkaXYgY2xhc3M9ImluZm8iPgogICAg",
+  "ICAgIDxkaXYgY2xhc3M9Im5hbWUiPiR7ZmlsZS5uYW1lfTwvZGl2PgogICAgICAgIDxkaXYgY2xhc3M9Im1ldGEiPiR7Zm10KGZp",
+  "bGUuc2l6ZSl9IDxzcGFuIGNsYXNzPSJhcnJvdyI+4oaSPC9zcGFuPiA8c3BhbiBjbGFzcz0ic3RhdHVzIj53b3JraW5n4oCmPC9z",
+  "cGFuPjwvZGl2PgogICAgICAgIDxkaXYgY2xhc3M9ImJhciI+PGRpdj48L2Rpdj48L2Rpdj4KICAgICAgPC9kaXY+CiAgICAgIDxi",
+  "dXR0b24gY2xhc3M9ImRsIiBkaXNhYmxlZD5Eb3dubG9hZDwvYnV0dG9uPmA7CiAgICBmaWxlc0VsLmFwcGVuZENoaWxkKGNhcmQp",
+  "OwogICAgcmV0dXJuIGNhcmQ7CiAgfQoKICBhc3luYyBmdW5jdGlvbiBoYW5kbGVGaWxlKGZpbGUpewogICAgY29uc3QgaXNQZGYg",
+  "PSBmaWxlLnR5cGUgPT09ICdhcHBsaWNhdGlvbi9wZGYnIHx8IC9cLnBkZiQvaS50ZXN0KGZpbGUubmFtZSk7CiAgICBjb25zdCBp",
+  "c0ltZyA9IGZpbGUudHlwZS5zdGFydHNXaXRoKCdpbWFnZS8nKSB8fCAvXC4oanBlP2d8cG5nfHdlYnB8Z2lmfGJtcCkkL2kudGVz",
+  "dChmaWxlLm5hbWUpOwogICAgY29uc3QgY2FyZCA9IG1ha2VDYXJkKGZpbGUpOwogICAgY29uc3QgYmFyID0gY2FyZC5xdWVyeVNl",
+  "bGVjdG9yKCcuYmFyID4gZGl2Jyk7CiAgICBjb25zdCBzdGF0dXMgPSBjYXJkLnF1ZXJ5U2VsZWN0b3IoJy5zdGF0dXMnKTsKICAg",
+  "IGNvbnN0IGRsID0gY2FyZC5xdWVyeVNlbGVjdG9yKCcuZGwnKTsKICAgIGNvbnN0IG9uUHJvZyA9IChwKSA9PiB7IGJhci5zdHls",
+  "ZS53aWR0aCA9IE1hdGgubWluKDEwMCwgTWF0aC5yb3VuZChwICogMTAwKSkgKyAnJSc7IH07CgogICAgdHJ5IHsKICAgICAgaWYg",
+  "KCFpc1BkZiAmJiAhaXNJbWcpIHRocm93IG5ldyBFcnJvcigndW5zdXBwb3J0ZWQgZmlsZSB0eXBlJyk7CiAgICAgIGNvbnN0IG1p",
+  "bkIgPSBwYXJzZUludChkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnbWluS2InKS52YWx1ZSwgMTApICogMTAyNDsKICAgICAgY29u",
+  "c3QgbWF4QiA9IHBhcnNlSW50KGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdtYXhLYicpLnZhbHVlLCAxMCkgKiAxMDI0OwoKICAg",
+  "ICAgY29uc3QgcmVzID0gaXNQZGYKICAgICAgICA/IGF3YWl0IGNvbXByZXNzUGRmKGZpbGUsIG1pbkIsIG1heEIsIG9uUHJvZykK",
+  "ICAgICAgICA6IGF3YWl0IGNvbXByZXNzSW1hZ2UoZmlsZSwgbWluQiwgbWF4Qiwgb25Qcm9nKTsKCiAgICAgIGJhci5zdHlsZS53",
+  "aWR0aCA9ICcxMDAlJzsKICAgICAgY29uc3QgcGN0ID0gcmVzLmNoYW5nZWQgPyBNYXRoLnJvdW5kKCgxIC0gcmVzLmJsb2Iuc2l6",
+  "ZSAvIGZpbGUuc2l6ZSkgKiAxMDApIDogMDsKICAgICAgY29uc3QgY2xzID0gcmVzLm5vdGUgJiYgL2NvdWxkbid0fGZlYXNpYmxl",
+  "fG5vdCBzZWxlY3RhYmxlLy50ZXN0KHJlcy5ub3RlKSA/ICd3YXJuJyA6ICdvayc7CiAgICAgIHN0YXR1cy5pbm5lckhUTUwgPSBg",
+  "PHNwYW4gY2xhc3M9Im5ldyAke2Nsc30iPiR7Zm10KHJlcy5ibG9iLnNpemUpfTwvc3Bhbj5gCiAgICAgICAgKyAocmVzLmNoYW5n",
+  "ZWQgPyBgIDxzcGFuIGNsYXNzPSIke2Nsc30iPijiiJIke3BjdH0lKTwvc3Bhbj5gIDogYCA8c3BhbiBjbGFzcz0id2FybiI+KHVu",
+  "Y2hhbmdlZCk8L3NwYW4+YCkKICAgICAgICArIChyZXMubm90ZSA/IGAgPHNwYW4gY2xhc3M9Indhcm4iPsK3ICR7cmVzLm5vdGV9",
+  "PC9zcGFuPmAgOiAnJyk7CgogICAgICBjb25zdCBvdXROYW1lID0gYmFzZU5hbWUoZmlsZS5uYW1lKSArIChyZXMuY2hhbmdlZCA/",
+  "ICctY29tcHJlc3NlZCcgOiAnJykgKyAnLicgKyByZXMuZXh0OwogICAgICBjb25zdCB1cmwgPSBVUkwuY3JlYXRlT2JqZWN0VVJM",
+  "KHJlcy5ibG9iKTsKICAgICAgZGwuZGlzYWJsZWQgPSBmYWxzZTsKICAgICAgZGwub25jbGljayA9ICgpID0+IHsgY29uc3QgYSA9",
+  "IGRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoJ2EnKTsgYS5ocmVmID0gdXJsOyBhLmRvd25sb2FkID0gb3V0TmFtZTsgYS5jbGljaygp",
+  "OyB9OwogICAgICByZXN1bHRzLnB1c2goeyBuYW1lOiBvdXROYW1lLCBibG9iOiByZXMuYmxvYiB9KTsKICAgICAgYWN0aW9ucy5z",
+  "dHlsZS5kaXNwbGF5ID0gJ2ZsZXgnOwogICAgfSBjYXRjaCAoZSl7CiAgICAgIGJhci5wYXJlbnRFbGVtZW50LnN0eWxlLmRpc3Bs",
+  "YXkgPSAnbm9uZSc7CiAgICAgIHN0YXR1cy5pbm5lckhUTUwgPSBgPHNwYW4gY2xhc3M9ImVyciI+ZmFpbGVkIOKAlCAke2UubWVz",
+  "c2FnZX08L3NwYW4+YDsKICAgIH0KICB9CgogIGFzeW5jIGZ1bmN0aW9uIGFkZEZpbGVzKGxpc3QpewogICAgZm9yIChjb25zdCBm",
+  "IG9mIGxpc3QpIGF3YWl0IGhhbmRsZUZpbGUoZik7CiAgfQoKICAvLyBldmVudHMKICBkcm9wLmFkZEV2ZW50TGlzdGVuZXIoJ2Ns",
+  "aWNrJywgKCkgPT4gcGlja2VyLmNsaWNrKCkpOwogIHBpY2tlci5hZGRFdmVudExpc3RlbmVyKCdjaGFuZ2UnLCBlID0+IHsgYWRk",
+  "RmlsZXMoWy4uLmUudGFyZ2V0LmZpbGVzXSk7IHBpY2tlci52YWx1ZSA9ICcnOyB9KTsKICBbJ2RyYWdlbnRlcicsJ2RyYWdvdmVy",
+  "J10uZm9yRWFjaChldiA9PiBkcm9wLmFkZEV2ZW50TGlzdGVuZXIoZXYsIGUgPT4geyBlLnByZXZlbnREZWZhdWx0KCk7IGRyb3Au",
+  "Y2xhc3NMaXN0LmFkZCgnb3ZlcicpOyB9KSk7CiAgWydkcmFnbGVhdmUnLCdkcm9wJ10uZm9yRWFjaChldiA9PiBkcm9wLmFkZEV2",
+  "ZW50TGlzdGVuZXIoZXYsIGUgPT4geyBlLnByZXZlbnREZWZhdWx0KCk7IGRyb3AuY2xhc3NMaXN0LnJlbW92ZSgnb3ZlcicpOyB9",
+  "KSk7CiAgZHJvcC5hZGRFdmVudExpc3RlbmVyKCdkcm9wJywgZSA9PiB7IGFkZEZpbGVzKFsuLi5lLmRhdGFUcmFuc2Zlci5maWxl",
+  "c10pOyB9KTsKCiAgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ2RsQWxsJykub25jbGljayA9IGFzeW5jICgpID0+IHsKICAgIGlm",
+  "ICghcmVzdWx0cy5sZW5ndGgpIHJldHVybjsKICAgIGNvbnN0IGJ0biA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdkbEFsbCcp",
+  "OwogICAgY29uc3QgbGFiZWwgPSBidG4udGV4dENvbnRlbnQ7CiAgICBidG4uZGlzYWJsZWQgPSB0cnVlOyBidG4udGV4dENvbnRl",
+  "bnQgPSAnWmlwcGluZ+KApic7CiAgICB0cnkgewogICAgICBjb25zdCB6aXAgPSBuZXcgSlNaaXAoKTsKICAgICAgY29uc3QgdXNl",
+  "ZCA9IHt9OwogICAgICByZXN1bHRzLmZvckVhY2gociA9PiB7CiAgICAgICAgbGV0IG5hbWUgPSByLm5hbWU7CiAgICAgICAgaWYg",
+  "KHVzZWRbbmFtZV0peyAvLyBkZWR1cGUgY29sbGlzaW9uczogZmlsZS5qcGcgLT4gZmlsZSAoMikuanBnCiAgICAgICAgICBjb25z",
+  "dCBtID0gbmFtZS5tYXRjaCgvXiguKj8pKFwuW14uXSspPyQvKTsKICAgICAgICAgIGNvbnN0IHN0ZW0gPSBtWzFdLCBleHQgPSBt",
+  "WzJdIHx8ICcnOwogICAgICAgICAgdXNlZFtuYW1lXSsrOwogICAgICAgICAgbmFtZSA9IGAke3N0ZW19ICgke3VzZWRbbmFtZV19",
+  "KSR7ZXh0fWA7CiAgICAgICAgfSBlbHNlIHsgdXNlZFtuYW1lXSA9IDE7IH0KICAgICAgICB6aXAuZmlsZShuYW1lLCByLmJsb2Ip",
+  "OwogICAgICB9KTsKICAgICAgY29uc3QgYmxvYiA9IGF3YWl0IHppcC5nZW5lcmF0ZUFzeW5jKHsgdHlwZTogJ2Jsb2InLCBjb21w",
+  "cmVzc2lvbjogJ1NUT1JFJyB9KTsKICAgICAgbGV0IHpuYW1lID0gKGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCd6aXBOYW1lJyku",
+  "dmFsdWUgfHwgJ2NvbXByZXNzZWQtZmlsZXMnKS50cmltKCkucmVwbGFjZSgvXC56aXAkL2ksICcnKTsKICAgICAgaWYgKCF6bmFt",
+  "ZSkgem5hbWUgPSAnY29tcHJlc3NlZC1maWxlcyc7CiAgICAgIGNvbnN0IHVybCA9IFVSTC5jcmVhdGVPYmplY3RVUkwoYmxvYik7",
+  "CiAgICAgIGNvbnN0IGEgPSBkb2N1bWVudC5jcmVhdGVFbGVtZW50KCdhJyk7IGEuaHJlZiA9IHVybDsgYS5kb3dubG9hZCA9IHpu",
+  "YW1lICsgJy56aXAnOyBhLmNsaWNrKCk7CiAgICAgIHNldFRpbWVvdXQoKCkgPT4gVVJMLnJldm9rZU9iamVjdFVSTCh1cmwpLCAx",
+  "MDAwKTsKICAgIH0gZmluYWxseSB7CiAgICAgIGJ0bi5kaXNhYmxlZCA9IGZhbHNlOyBidG4udGV4dENvbnRlbnQgPSBsYWJlbDsK",
+  "ICAgIH0KICB9OwogIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdjbGVhcicpLm9uY2xpY2sgPSAoKSA9PiB7CiAgICBmaWxlc0Vs",
+  "LmlubmVySFRNTCA9ICcnOyByZXN1bHRzLmxlbmd0aCA9IDA7IGFjdGlvbnMuc3R5bGUuZGlzcGxheSA9ICdub25lJzsKICB9Owo8",
+  "L3NjcmlwdD4KPC9ib2R5Pgo8L2h0bWw+",
+];
+let _compressorBlobUrl = null;
+function _getCompressorUrl() {
+  if (_compressorBlobUrl) return _compressorBlobUrl;
+  const b64 = COMPRESSOR_B64_PARTS.join('');
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: 'text/html' });
+  _compressorBlobUrl = URL.createObjectURL(blob);
+  return _compressorBlobUrl;
+}
+function openCompressor() {
+  if (!curUser || curUser.role !== 'admin') return;
+  const frame = document.getElementById('compressorFrame');
+  const bg = document.getElementById('compressorModalBg');
+  if (!frame || !bg) return;
+  if (!frame.src || frame.src === 'about:blank') frame.src = _getCompressorUrl();
+  bg.style.display = 'flex';
+}
+function closeCompressor() {
+  const bg = document.getElementById('compressorModalBg');
+  if (bg) bg.style.display = 'none';
+}
+// ESC closes the compressor modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const bg = document.getElementById('compressorModalBg');
+    if (bg && bg.style.display !== 'none') closeCompressor();
+  }
+});
+
 setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
 
 // ── Live clock for tech view datetime header ──
