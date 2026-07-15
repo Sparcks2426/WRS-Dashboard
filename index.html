@@ -986,9 +986,20 @@ let shopModalTech = null, shopModalSelected = null;
     if (savedUser && savedToken) {
       const u = JSON.parse(savedUser);
       if (u && u.name) {
+        // Re-hydrate from the current USERS table so any role/tech changes
+        // made in code (e.g. promoting a tech to admin) take effect the next
+        // time they auto-log-in — instead of being locked to whatever role
+        // was snapshotted when they first signed in.
+        const fresh = USERS.find(x => x.name === u.name);
+        const user = fresh ? { ...u, ...fresh } : u;
         authToken = savedToken;
         apiCall('/validate', {}).then(res => {
-          if (res.valid) startDash(u);
+          if (res.valid) {
+            // Keep the persisted copy in sync so subsequent reads see the
+            // updated role/tech without needing another full sign-in.
+            try { localStorage.setItem('wrs_user', JSON.stringify(user)); } catch(e) {}
+            startDash(user);
+          }
           else {
             authToken = null;
             localStorage.removeItem('wrs_user');
