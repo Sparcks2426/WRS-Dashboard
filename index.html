@@ -991,26 +991,38 @@ let shopModalTech = null, shopModalSelected = null;
         // time they auto-log-in — instead of being locked to whatever role
         // was snapshotted when they first signed in.
         const fresh = USERS.find(x => x.name === u.name);
-        const user = fresh ? { ...u, ...fresh } : u;
-        authToken = savedToken;
-        apiCall('/validate', {}).then(res => {
-          if (res.valid) {
-            // Keep the persisted copy in sync so subsequent reads see the
-            // updated role/tech without needing another full sign-in.
-            try { localStorage.setItem('wrs_user', JSON.stringify(user)); } catch(e) {}
-            startDash(user);
-          }
-          else {
-            authToken = null;
-            localStorage.removeItem('wrs_user');
-            localStorage.removeItem('wrs_token');
-          }
-        }).catch(() => {
+        // If the role has been changed in code since this user last signed
+        // in, their existing Worker token is still bound to the OLD role
+        // server-side — a promoted tech would see the admin UI but every
+        // write would come back rejected. Force a fresh PIN sign-in so the
+        // Worker mints a new token with the new role.
+        if (fresh && (fresh.role !== u.role || fresh.tech !== u.tech)) {
           authToken = null;
           localStorage.removeItem('wrs_user');
           localStorage.removeItem('wrs_token');
-        });
-        return;
+          // fall through to the normal login screen
+        } else {
+          const user = fresh ? { ...u, ...fresh } : u;
+          authToken = savedToken;
+          apiCall('/validate', {}).then(res => {
+            if (res.valid) {
+              // Keep the persisted copy in sync so subsequent reads see the
+              // updated role/tech without needing another full sign-in.
+              try { localStorage.setItem('wrs_user', JSON.stringify(user)); } catch(e) {}
+              startDash(user);
+            }
+            else {
+              authToken = null;
+              localStorage.removeItem('wrs_user');
+              localStorage.removeItem('wrs_token');
+            }
+          }).catch(() => {
+            authToken = null;
+            localStorage.removeItem('wrs_user');
+            localStorage.removeItem('wrs_token');
+          });
+          return;
+        }
       }
     }
   } catch(e) {}
