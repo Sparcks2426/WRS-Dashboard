@@ -1146,17 +1146,29 @@ function doLogout() {
 
 // ── Lazy-load Leaflet (CSS + JS) only after login so initial page load is instant ──
 let leafletLoaded = false;
+let leafletFailed = false;
 function loadLeaflet(cb) {
-  if (leafletLoaded) { cb(); return; }
+  if (leafletLoaded || leafletFailed) { cb(); return; }
   // Load CSS
   const cssEl = document.getElementById('leafletCSS');
   if (cssEl) cssEl.href = cssEl.getAttribute('data-src');
   // Load JS
   const s = document.createElement('script');
   s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-  s.onload = () => { leafletLoaded = true; cb(); };
+  s.onload  = () => { leafletLoaded = true; cb(); };
+  // If the CDN is blocked or offline, don't strand the dashboard — carry on
+  // without a map. mapReady() keeps initMap/updateMap from throwing on `L`.
+  s.onerror = () => {
+    leafletFailed = true;
+    console.warn('Leaflet failed to load from unpkg — map disabled this session');
+    cb();
+  };
   document.head.appendChild(s);
 }
+
+// Guard for every map entry point: Leaflet is loaded lazily and from a CDN,
+// so `L` may legitimately not exist.
+function mapReady() { return leafletLoaded && typeof L !== 'undefined'; }
 
 function startDash(user) {
   curUser = user;
@@ -1408,22 +1420,47 @@ function parseJob(raw) {
 }
 
 // ════════════════════════════════════════════
-//  GEOCODING (Nominatim, serialised, cached)
+//  GEOCODING (Google if the key works, else Nominatim — cached, serialised)
 // ════════════════════════════════════════════
+// Set once Google geocoding has proven unusable this session (CORS block,
+// referrer-restricted key, billing off, quota). After that we stop paying the
+// round-trip on every address and go straight to Nominatim.
+let googleGeoDead = false;
+
 async function geocodeOne(addr, retries=3) {
+  if (!addr) return null;
   if (geoCache[addr]) return geoCache[addr];
-  if (CONFIG.MAPS_API_KEY) {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&key=${CONFIG.MAPS_API_KEY}`;
-    const r = await fetch(url);
-    const d = await r.json();
-    if (d.status==='OK' && d.results[0]) {
-      const loc = d.results[0].geometry.location;
-      geoCache[addr] = { lat: loc.lat, lng: loc.lng };
-      return geoCache[addr];
+
+  // ── Try Google first (fast, accurate) ──
+  // Every failure path here MUST fall through to Nominatim rather than throw.
+  // Previously this branch had no try/catch and returned null on any non-OK
+  // status, so a blocked key or a CORS rejection meant no ticket ever got
+  // coordinates — and updateMap() then hid the whole map with no explanation.
+  if (CONFIG.MAPS_API_KEY && !googleGeoDead) {
+    try {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&key=${CONFIG.MAPS_API_KEY}`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const d = await r.json();
+      if (d.status === 'OK' && d.results?.[0]) {
+        const loc = d.results[0].geometry.location;
+        geoCache[addr] = { lat: loc.lat, lng: loc.lng };
+        return geoCache[addr];
+      }
+      // Key/account-level problems apply to every address, not just this one —
+      // stop trying Google for the rest of the session.
+      if (['REQUEST_DENIED','OVER_QUERY_LIMIT','OVER_DAILY_LIMIT','INVALID_REQUEST'].includes(d.status)) {
+        googleGeoDead = true;
+        console.warn('Google geocoding disabled for this session:', d.status, d.error_message || '');
+      }
+      // ZERO_RESULTS or a one-off failure: fall through and let Nominatim try.
+    } catch (e) {
+      // Network error or CORS rejection — the browser can't use this endpoint.
+      googleGeoDead = true;
+      console.warn('Google geocoding unreachable, falling back to Nominatim:', e?.message || e);
     }
-    return null;
   }
-  // Free Nominatim with retry + backoff
+
+  // ── Free Nominatim with retry + backoff ──
   for (let attempt=0; attempt<retries; attempt++) {
     try {
       if (attempt > 0) await new Promise(r=>setTimeout(r, 1500 * attempt));
@@ -1439,6 +1476,12 @@ async function geocodeOne(addr, retries=3) {
   return null;
 }
 
+// True once we've fallen back — used to pick the polite 1.1s Nominatim delay
+// instead of the 50ms Google delay.
+function geoDelayMs() {
+  return (CONFIG.MAPS_API_KEY && !googleGeoDead) ? 50 : 1100;
+}
+
 async function geocodeGreenJobs() {
   // Pre-populate geoCache from hardcoded shop coords — no network needed
   for (const [name, loc] of Object.entries(SHOP_LOCATIONS)) {
@@ -1450,9 +1493,13 @@ async function geocodeGreenJobs() {
   const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !Object.keys(SHOP_LOCATIONS).includes(j.job));
   let anyNew = false;
   for (const j of toGeo) {
-    const c = await geocodeOne(j.address);
-    if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
-    await new Promise(r => setTimeout(r, CONFIG.MAPS_API_KEY ? 50 : 1100));
+    // Per-address guard: a single failure used to reject out of this loop and
+    // kill the whole batch (and the updateMap() chained after it).
+    try {
+      const c = await geocodeOne(j.address);
+      if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
+    } catch(e) { console.warn('Geocode failed for', j.address, e?.message || e); }
+    await new Promise(r => setTimeout(r, geoDelayMs()));
   }
   return anyNew;
 }
@@ -1559,7 +1606,9 @@ function clearTicketDraft(tech) {
 // ════════════════════════════════════════════
 //  RENDER — ADMIN VIEW
 // ════════════════════════════════════════════
-function render() { rLeg(); rBoard(); rSpecialCols(); }
+// bindDrag() runs last, after BOTH boards exist — the special columns are
+// rendered after rBoard(), so binding inside rBoard() would have skipped them.
+function render() { rLeg(); rBoard(); rSpecialCols(); if (canWrite) bindDrag(); }
 
 function rLeg() {
   document.getElementById('legend').innerHTML =
@@ -1626,7 +1675,7 @@ function rBoard() {
   document.getElementById('board').innerHTML = h;
   // Repopulate persisted drafts + refocus whatever input the user was in.
   restoreTicketDrafts();
-  if (canWrite) bindDrag();
+  // (bindDrag moved to render() so the special columns get bound too)
 }
 
 // Special columns: JP Review / Installs (split), Louis, Follow Up, Estimates
@@ -1671,7 +1720,8 @@ function rSpecialCols() {
     if (!sj.length) x += `<div style="text-align:center;padding:14px;color:var(--dm);font-size:10px">${s?'NO MATCH':'NONE'}</div>`;
     else sj.forEach(j => {
       const tc = TC[j.tech]||'#888';
-      x += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${sc.color};background:${sc.color}10;cursor:default">
+      x += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" data-spcard="1" style="border-left-color:${sc.color};background:${sc.color}10">
+        ${canWrite?'<span class="draghandle" title="Drag to another column"><span></span></span>':''}
         <span class="jsd" style="background:${sc.color}"></span>
         <div class="jinfo">
           <span class="jn">${j.job}</span>
@@ -1898,7 +1948,7 @@ async function reshuffleTech(tech) {
     for (const j of missing) {
       const c = await geocodeOne(j.address);
       if (c) { j.lat = c.lat; j.lng = c.lng; }
-      await new Promise(r => setTimeout(r, CONFIG.MAPS_API_KEY ? 50 : 1100));
+      await new Promise(r => setTimeout(r, geoDelayMs()));
     }
 
     // Sort closest → furthest from the start location. Anything we couldn't
@@ -3453,8 +3503,80 @@ async function promoteInstall(date, slot) {
 }
 
 // ════════════════════════════════════════════
+//  DRAG HELPERS — special (lower) columns
+//  A ticket's lower-column membership IS its status colour, so moving it
+//  between JP Review / Installs / Louis / Follow Up / Estimates is a
+//  background-colour write; the cell itself never moves.
+// ════════════════════════════════════════════
+async function retagJob(j, newColor) {
+  if (!canWrite || !j || j.color === newColor) return;
+  const prev = j.color;
+  j.color = newColor;
+  render(); updateMap();
+  isSaving = true;
+  try {
+    await sheetsSetBackground(j.row, j.col, STATUS_TO_HEX[newColor] || '#ffffff');
+    toast(`✓ ${j.job} → ${SL[newColor] || newColor}`);
+  } catch (err) {
+    j.color = prev;            // roll the optimistic change back
+    render(); updateMap();
+    toast('Move failed — try again');
+    console.error('retagJob failed:', err);
+  } finally {
+    isSaving = false;
+  }
+}
+
+// Move a ticket into another tech's column, optionally forcing a new status.
+// Writes the destination cell before clearing the source so a mid-flight
+// failure can't lose the ticket entirely.
+async function moveJobToTech(j, newTech, forceColor) {
+  if (!canWrite || !j || !TECHS.includes(newTech)) return;
+  if (j.tech === newTech && !forceColor) return;
+
+  const oldRow = j.row, oldCol = j.col;
+  const newCol = TECHS.indexOf(newTech) + 1;
+  const occupied = new Set(jobs.filter(x => x.tech === newTech && x.id !== j.id).map(x => x.row));
+  let newRow = null;
+  for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) { if (!occupied.has(r)) { newRow = r; break; } }
+  if (!newRow) { toast(`${newTech} column is full`); return; }
+
+  const base = j.job + (j.address ? ' - ' + j.address : '');
+  const val  = j.notes ? `${base} ||NOTE:${j.notes}` : base;
+  const color = forceColor || j.color;
+  const hex   = STATUS_TO_HEX[color] || '#ffffff';
+
+  isSaving = true;
+  toast(`Moving to ${newTech}...`);
+  try {
+    await sheetsSetValue(newRow, newCol, val);
+    await sheetsSetBackground(newRow, newCol, hex);
+    if (!(oldRow === newRow && oldCol === newCol)) await sheetsClear(oldRow, oldCol);
+    j.tech = newTech; j.col = newCol; j.row = newRow; j.color = color;
+    jobs.sort((a, b) => (a.row - b.row) || (a.col - b.col));
+    render(); updateMap();
+    toast(`✓ Moved to ${newTech}`);
+  } catch (err) {
+    toast('Move failed — try again');
+    console.error('moveJobToTech failed:', err);
+  } finally {
+    isSaving = false;
+    loadData();
+  }
+}
+
+// ════════════════════════════════════════════
 //  DRAG & DROP
 // ════════════════════════════════════════════
+// Tracks the card currently armed for dragging. The disarm listeners below are
+// registered ONCE — previously bindDrag() attached a fresh pair of document
+// mouseup/touchend handlers per card on every render, so with the 60s
+// auto-refresh they piled up by the thousand and were never released.
+let _dragArmed = null;
+function _disarmDrag() { if (_dragArmed) { _dragArmed.draggable = false; _dragArmed = null; } }
+document.addEventListener('mouseup',  _disarmDrag);
+document.addEventListener('touchend', _disarmDrag);
+
 function bindDrag() {
   let ds = null;
   document.querySelectorAll('.jc').forEach(el => {
@@ -3462,12 +3584,9 @@ function bindDrag() {
     if (!handle) return; // No handle = not editable, skip entirely
 
     // Only the handle arms the card for dragging. Mouse + touch.
-    const arm    = () => { el.draggable = true; };
-    const disarm = () => { el.draggable = false; };
+    const arm = () => { el.draggable = true; _dragArmed = el; };
     handle.addEventListener('mousedown',  arm);
     handle.addEventListener('touchstart', arm, {passive:true});
-    document.addEventListener('mouseup',  disarm);
-    document.addEventListener('touchend', disarm);
 
     el.addEventListener('dragstart', function(e) {
       // Hard guard: if the card wasn't armed via the handle, abort.
@@ -3476,7 +3595,7 @@ function bindDrag() {
       e.dataTransfer.setData('text/plain','x'); e.dataTransfer.effectAllowed='move';
     });
     el.addEventListener('dragend', function() {
-      this.classList.remove('dragging'); ds=null; el.draggable=false;
+      this.classList.remove('dragging'); ds=null; _disarmDrag();
       document.querySelectorAll('.dragover').forEach(x=>x.classList.remove('dragover'));
     });
     el.addEventListener('dragover', function(e) {
@@ -3492,6 +3611,18 @@ function bindDrag() {
       const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
       const tJob=jobs.find(x=>x.id===parseInt(this.dataset.id));
       if (!sJob||!tJob) return;
+
+      // Dropped ONTO a card sitting in one of the lower/special columns.
+      // Membership in those columns is purely the ticket's status colour, so
+      // the move is a retag — the ticket keeps its tech, row and column.
+      const spTarget = this.closest('.tjobs')?.dataset.spkey;
+      if (spTarget) { await retagJob(sJob, spTarget); return; }
+
+      // Dropped onto a tech-board card, but the ticket came FROM a special
+      // column: send it back to today's board under that card's tech.
+      const fromSpecial = !!ds.dataset.spcard;
+      if (fromSpecial) { await moveJobToTech(sJob, tJob.tech, 'green'); return; }
+
       if (sJob.tech===tJob.tech) {
         // Same column reorder
         const sr=sJob.row, tr=tJob.row;
@@ -3546,7 +3677,8 @@ function bindDrag() {
     });
     el.draggable = false;
   });
-  // Drop on column (empty or not — allows moving to different tech)
+  // Drop on column body — tech columns (move tech) and special columns (retag).
+  // Handles empty columns too, which card-level handlers can't.
   document.querySelectorAll('.tjobs').forEach(tj => {
     tj.addEventListener('dragover', e=>{ e.preventDefault(); tj.classList.add('dragover'); });
     tj.addEventListener('dragleave', ()=>tj.classList.remove('dragover'));
@@ -3555,9 +3687,18 @@ function bindDrag() {
       if(!ds) return;
       const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
       if(!sJob) return;
+
+      // Special column: retag to that column's status, stay with the same tech.
+      const spKey = tj.dataset.spkey;
+      if (spKey) { await retagJob(sJob, spKey); return; }
+
       const newTech=tj.dataset.tech;
-      if(!newTech||newTech===sJob.tech) return;
+      if(!newTech) return;
       if(!TECHS.includes(newTech)) return;
+      // Coming out of a special column onto a tech column: move AND turn green
+      // so it lands back on the active board rather than staying parked.
+      if (ds.dataset.spcard) { await moveJobToTech(sJob, newTech, 'green'); return; }
+      if(newTech===sJob.tech) return;
       const oldRow=sJob.row, oldCol=sJob.col;
       const newCol=TECHS.indexOf(newTech)+1;
       const occupied=new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
@@ -3591,6 +3732,7 @@ let homesGeocoded = false;
 
 function initMap() {
   if (lmap) return;
+  if (!mapReady()) return;
   lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
   markerLayer = L.layerGroup().addTo(lmap);
@@ -3613,7 +3755,7 @@ async function geocodeTechHomes() {
       const c = await geocodeOne(h.address);
       if (c) { h.lat = c.lat; h.lng = c.lng; }
     } catch(e) {}
-    if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1100));
+    await new Promise(r=>setTimeout(r,geoDelayMs()));
   }
   homesGeocoded = true;
 }
@@ -3654,11 +3796,40 @@ function togMap() {
 }
 
 function updateMap() {
-  const tj=jobs.filter(j=>j.color==='green'&&j.lat&&j.lng);
   const sec=document.getElementById('mapsec');
-  if(!tj.length){sec.style.display='none';return;}
+  const tj=jobs.filter(j=>j.color==='green'&&j.lat&&j.lng);
+
+  // The map used to just vanish whenever nothing had coordinates, which made a
+  // geocoding failure look identical to "no work today". Say which it is.
+  if(!tj.length){
+    const awaiting = jobs.filter(j=>j.color==='green'&&j.address&&!(j.lat&&j.lng)).length;
+    if (!leafletFailed && !awaiting) { sec.style.display='none'; return; }
+    sec.style.display='';
+    const msg = leafletFailed
+      ? 'Map library failed to load. Check the connection and refresh — tickets are unaffected.'
+      : `Locating ${awaiting} ticket address${awaiting===1?'':'es'}…`;
+    const mw = document.getElementById('mapwrap');
+    if (mw) mw.innerHTML = `<div style="padding:26px 18px;text-align:center;color:var(--dm2);font-size:13px;font-weight:600">${msg}</div>`;
+    return;
+  }
+
+  // Coordinates arrived after a placeholder was shown — restore the map shell
+  // exactly as it appears in the static markup.
+  const mw = document.getElementById('mapwrap');
+  if (mw && !document.getElementById('lmap')) {
+    mw.innerHTML =
+      `<div class="maplist">
+        <div class="mfpills" id="mfpills"></div>
+        <div id="routeSum"></div>
+        <div id="jobList"></div>
+      </div>
+      <div class="mapbox"><div id="lmap"></div></div>`;
+    lmap = null; markerLayer = null; routeLayer = null; homeLayer = null;
+  }
+
   sec.style.display='';
   initMap();
+  if (!mapReady() || !lmap) return;
   setTimeout(()=>lmap&&lmap.invalidateSize(),150);
 
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
@@ -3770,7 +3941,7 @@ async function renderTechView(withMap=true) {
       }
       const coords = await geocodeOne(j.address);
       if (coords) { j.lat=coords.lat; j.lng=coords.lng; }
-      if (!CONFIG.MAPS_API_KEY) await new Promise(r=>setTimeout(r,1200));
+      await new Promise(r=>setTimeout(r,geoDelayMs()));
     }
   }
   // Ensure shop job always has coords from hardcoded SHOP_LOCATIONS
