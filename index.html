@@ -274,6 +274,23 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .spcols{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
 .spcol{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r12);min-width:220px;flex:1;display:flex;flex-direction:column}
 .spcol .thdr{border-radius:var(--r12) var(--r12) 0 0}
+/* Split special column: two stacked halves sharing one column slot (JP Review / Installs) */
+.spcol.split{padding:0}
+.spcol.split .sphalf{display:flex;flex-direction:column;flex:1 1 0;min-height:0}
+.spcol.split .sphalf+.sphalf{border-top:2px solid var(--bd)}
+.spcol.split .sphalf .thdr{border-radius:0}
+.spcol.split .sphalf:first-child .thdr{border-radius:var(--r12) var(--r12) 0 0}
+.spcol.split .tjobs{overflow-y:auto;max-height:340px}
+
+/* ── RESHUFFLE (nearest-first) BUTTON IN TECH HEADER ── */
+.rsbtn{flex-shrink:0;width:22px;height:22px;display:flex;align-items:center;justify-content:center;
+  border-radius:7px;border:1px solid var(--bd);background:var(--bg);color:var(--dm2);
+  cursor:pointer;padding:0;transition:all .15s}
+.rsbtn:hover{color:#fff;border-color:currentColor}
+.rsbtn svg{width:13px;height:13px}
+.rsbtn.busy{opacity:.5;pointer-events:none}
+.rsbtn.busy svg{animation:rsspin .8s linear infinite}
+@keyframes rsspin{to{transform:rotate(360deg)}}
 
 /* ── RESPONSIVE ── */
 @media(max-width:900px){.mainarea{flex-direction:column}.jpcol{width:100%}}
@@ -410,7 +427,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <div class="ngrid" id="ngrid"></div>
     </div>
 
-    <!-- Special Columns: JP Review, John Follow Up, Follow Up, Quote Needed -->
+    <!-- Special Columns: JP Review / Installs (split), Louis, Follow Up, Estimates -->
     <div style="margin:16px 0 10px;display:flex;justify-content:flex-start">
       <input type="text" class="sbox" id="sbox2" placeholder="Search jobs or techs..." style="width:100%;max-width:520px">
     </div>
@@ -763,7 +780,7 @@ const JOB_ROW_START = 6, JOB_ROW_END = 18;  // rows 6–18
 const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23
 
 // ── Status maps ──
-const SL  = { green:"Today's Tickets", orange:"Follow Up", yellow:"Quote Needed", blue:"Parts Needed", inst:"Installation", pink:"JP Review", john:"John Follow Up", close:"Close Out", none:"Untagged", que:"➜ Move to QUE" };
+const SL  = { green:"Today's Tickets", orange:"Follow Up", yellow:"Estimates", blue:"Parts Needed", inst:"Installs", pink:"JP Review", john:"Louis", close:"Close Out", none:"Untagged", que:"➜ Move to QUE" };
 const SO  = ['green','orange','yellow','blue','inst'];
 const CS  = {
   green: { f:'#10b981', b:'rgba(16,185,129,.1)',  s:'#059669' },
@@ -1554,9 +1571,11 @@ function resetFilters()       { activeFilters.clear(); statFilter=null; render()
 function toggleFilt(c)        { activeFilters.has(c)?activeFilters.delete(c):activeFilters.add(c); render(); }
 
 function getFiltered() {
-  // Main board only shows green + inst (active work)
+  // Main board only shows green (active work); installs live in their own half-column
   return jobs.filter(j => {
-    if (['pink','john','orange','yellow','blue','close'].includes(j.color)) return false;
+    // 'inst' now lives in the Installs half-column under JP Review, so it's
+    // excluded here too — otherwise install tickets would render twice.
+    if (['pink','john','orange','yellow','blue','close','inst'].includes(j.color)) return false;
     if (search) { const s=search.toLowerCase(); if(!j.job.toLowerCase().includes(s)&&!j.tech.toLowerCase().includes(s)&&!j.address.toLowerCase().includes(s)) return false; }
     if (activeFilters.size && !activeFilters.has(j.color)) return false;
     if (statFilter && j.color!==statFilter) return false;
@@ -1591,6 +1610,11 @@ function rBoard() {
         onkeydown="if(event.key==='Enter'){event.preventDefault();addJFull('${tech}');}">
     </div>`;
     h += `<div class="thdr">
+      ${canWrite?`<button type="button" class="rsbtn" id="rs_${tech}" style="color:${tc}"
+        onclick="event.stopPropagation();reshuffleTech('${tech}')"
+        title="Reorder ${tech}'s tickets: closest to their start location first">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
+      </button>`:'<span style="width:22px"></span>'}
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
       <span class="tcnt">${tj.length}</span>
     </div>
@@ -1605,36 +1629,49 @@ function rBoard() {
   if (canWrite) bindDrag();
 }
 
-// Special columns: JP Review, John Follow Up, Follow Up, Quote Needed
+// Special columns: JP Review / Installs (split), Louis, Follow Up, Estimates
+//
+// The first slot is SPLIT into two stacked halves that share one column width:
+//   top half    = JP Review (pink)
+//   bottom half = Installs  (inst)
+// Everything else is a single full-height column as before.
 function rSpecialCols() {
   const SCOLS = [
-    { key:'pink',   label:'JP Review',      color:'#ec4899' },
-    { key:'john',   label:'John Follow Up', color:'#06b6d4' },
-    { key:'orange', label:'Follow Up',      color:'#f97316' },
-    { key:'yellow', label:'Quote Needed',   color:'#eab308' },
+    { split:[
+        { key:'pink', label:'JP Review', color:'#ec4899' },
+        { key:'inst', label:'Installs',  color:'#8b5cf6' },
+      ] },
+    { key:'john',   label:'Louis',        color:'#06b6d4' },
+    { key:'orange', label:'Follow Up',    color:'#f97316' },
+    { key:'yellow', label:'Estimates',    color:'#eab308' },
   ];
-  let h = '';
   // When a search is active, the special columns honor it too — so searching
-  // can surface tickets parked in JP Review, John Follow Up, Follow Up, or
-  // Quote Needed (matching job name, tech, or address — same as the board).
+  // can surface tickets parked in JP Review, Installs, Louis, Follow Up, or
+  // Estimates (matching job name, tech, or address — same as the board).
   const s = search ? search.toLowerCase() : '';
-  SCOLS.forEach(sc => {
-    let sj = jobs.filter(j=>j.color===sc.key);
+
+  const pick = key => {
+    let sj = jobs.filter(j => j.color === key);
     if (s) sj = sj.filter(j =>
       j.job.toLowerCase().includes(s) ||
       j.tech.toLowerCase().includes(s) ||
       (j.address||'').toLowerCase().includes(s)
     );
-    h += `<div class="spcol" style="border-color:${sc.color}30">
-      <div class="thdr" style="background:${sc.color}12">
+    return sj;
+  };
+
+  // Renders one header + job list for a given status key.
+  const half = sc => {
+    const sj = pick(sc.key);
+    let x = `<div class="thdr" style="background:${sc.color}12">
         <span class="tn" style="color:${sc.color}">${sc.label}</span>
         <span class="tcnt">${sj.length}</span>
       </div>
       <div class="tjobs" data-spkey="${sc.key}">`;
-    if (!sj.length) h += `<div style="text-align:center;padding:14px;color:var(--dm);font-size:10px">${s?'NO MATCH':'NONE'}</div>`;
+    if (!sj.length) x += `<div style="text-align:center;padding:14px;color:var(--dm);font-size:10px">${s?'NO MATCH':'NONE'}</div>`;
     else sj.forEach(j => {
       const tc = TC[j.tech]||'#888';
-      h += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${sc.color};background:${sc.color}10;cursor:default">
+      x += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" style="border-left-color:${sc.color};background:${sc.color}10;cursor:default">
         <span class="jsd" style="background:${sc.color}"></span>
         <div class="jinfo">
           <span class="jn">${j.job}</span>
@@ -1644,7 +1681,19 @@ function rSpecialCols() {
         <button class="ct" onclick="event.stopPropagation();openDD(${j.id},this)"><svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>`:''}
       </div>`;
     });
-    h += `</div></div>`;
+    x += `</div>`;
+    return x;
+  };
+
+  let h = '';
+  SCOLS.forEach(sc => {
+    if (sc.split) {
+      h += `<div class="spcol split" style="border-color:${sc.split[0].color}30">`;
+      sc.split.forEach(sub => { h += `<div class="sphalf">${half(sub)}</div>`; });
+      h += `</div>`;
+    } else {
+      h += `<div class="spcol" style="border-color:${sc.color}30">${half(sc)}</div>`;
+    }
   });
   document.getElementById('spcols').innerHTML = h;
 }
@@ -1776,6 +1825,121 @@ async function swapRows(row1, col, row2) {
     sheetsSetValue(row1,col,v2), sheetsSetBackground(row1,col,b2),
     sheetsSetValue(row2,col,v1), sheetsSetBackground(row2,col,b1),
   ]);
+}
+
+// ════════════════════════════════════════════
+//  RESHUFFLE — nearest-first ordering per tech
+//  Sorts a tech's tickets by straight-line distance from that tech's start
+//  location (TECH_START_LOCATIONS), closest first, then rewrites the sheet
+//  cells so the new order persists.
+// ════════════════════════════════════════════
+
+// Great-circle distance in miles.
+function milesBetween(aLat, aLng, bLat, bLng) {
+  const R = 3958.8, rad = d => d * Math.PI / 180;
+  const dLat = rad(bLat - aLat), dLng = rad(bLng - aLng);
+  const s = Math.sin(dLat/2)**2 +
+            Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+// Rewrite a column so `orderedJobs` occupy `targetRows` in that order.
+// Reads the raw cell value + background for each job's current row first, then
+// writes them back into the target rows. Copying raw cells (rather than
+// rebuilding the text from parsed fields) means notes, job #, and any odd
+// formatting survive the shuffle untouched — same approach as swapRows().
+async function applyRowOrder(col, orderedJobs, targetRows) {
+  const reads = await Promise.all(orderedJobs.map(j =>
+    sheetsGetFormatting(`Sheet1!${colLetter(col)}${j.row}`)
+  ));
+  const cells = reads.map(d => {
+    const c = d.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0];
+    return {
+      v:  c?.userEnteredValue?.stringValue || '',
+      bg: rgbToHex(c?.userEnteredFormat?.backgroundColor || {}),
+    };
+  });
+  const writes = [];
+  for (let i = 0; i < targetRows.length; i++) {
+    writes.push(sheetsSetValue(targetRows[i], col, cells[i].v));
+    writes.push(sheetsSetBackground(targetRows[i], col, cells[i].bg));
+  }
+  await Promise.all(writes);
+}
+
+async function reshuffleTech(tech) {
+  if (!canWrite) return;
+  const btn = document.getElementById('rs_' + tech);
+
+  // Jobs currently shown in this tech's board column (ignores search/filter so
+  // the shuffle always covers the whole column, not just what's visible).
+  const HIDDEN = ['pink','john','orange','yellow','blue','close','inst'];
+  const tj = jobs.filter(j => j.tech === tech && !HIDDEN.includes(j.color));
+  if (tj.length < 2) { toast(tj.length ? 'Only one ticket — nothing to reorder' : 'No tickets to reorder'); return; }
+
+  const start = TECH_START_LOCATIONS[tech];
+  if (!start || (!start.address && !(start.lat && start.lng))) {
+    toast(`No start location on file for ${tech}`);
+    return;
+  }
+
+  if (btn) btn.classList.add('busy');
+  try {
+    // Resolve the tech's start coords (cached on TECH_START_LOCATIONS after first hit).
+    if (!(start.lat && start.lng)) {
+      const c = await geocodeOne(start.address);
+      if (c) { start.lat = c.lat; start.lng = c.lng; }
+    }
+    if (!(start.lat && start.lng)) { toast(`Couldn't locate ${tech}'s start address`); return; }
+
+    // Fill in any missing ticket coords. Shop visits already have coords in geoCache.
+    const missing = tj.filter(j => !(j.lat && j.lng) && j.address);
+    if (missing.length) toast(`Locating ${missing.length} address${missing.length>1?'es':''}...`);
+    for (const j of missing) {
+      const c = await geocodeOne(j.address);
+      if (c) { j.lat = c.lat; j.lng = c.lng; }
+      await new Promise(r => setTimeout(r, CONFIG.MAPS_API_KEY ? 50 : 1100));
+    }
+
+    // Sort closest → furthest from the start location. Anything we couldn't
+    // geocode keeps its relative order and sinks to the bottom.
+    const ordered = tj
+      .map((j, i) => ({
+        j, i,
+        d: (j.lat && j.lng) ? milesBetween(start.lat, start.lng, j.lat, j.lng) : Infinity,
+      }))
+      .sort((a, b) => (a.d - b.d) || (a.i - b.i))
+      .map(x => x.j);
+
+    const unplaced = ordered.filter(j => !(j.lat && j.lng)).length;
+    const targetRows = tj.map(j => j.row).sort((a, b) => a - b);
+
+    // No-op guard: already in nearest-first order.
+    if (ordered.every((j, i) => j.row === targetRows[i])) {
+      toast('Already sorted closest → furthest');
+      return;
+    }
+
+    isSaving = true;
+    await applyRowOrder(TECHS.indexOf(tech) + 1, ordered, targetRows);
+    ordered.forEach((j, i) => { j.row = targetRows[i]; });
+    // rBoard() renders each tech's tickets in jobs[] array order, and loadData()
+    // builds that array row-major. Reassigning .row alone would leave the board
+    // looking unchanged until the next sync, so re-sort jobs[] the same way
+    // loadData() would — by (row, col) — to keep the optimistic render honest.
+    jobs.sort((a, b) => (a.row - b.row) || (a.col - b.col));
+    render(); updateMap();
+    toast(unplaced
+      ? `✓ ${tech} reordered — ${unplaced} without an address left at the bottom`
+      : `✓ ${tech} reordered: closest first`);
+  } catch (e) {
+    console.error('reshuffleTech failed:', e);
+    toast('Reorder failed — try again');
+  } finally {
+    isSaving = false;
+    if (btn) btn.classList.remove('busy');
+    loadData(); // reconcile with what actually landed in the sheet
+  }
 }
 
 // ── Status dropdown ──
