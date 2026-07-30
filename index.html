@@ -215,6 +215,10 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .cotech-row{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px}
 .cotech-ico{font-size:12px;opacity:.9;line-height:1}
 .cotech{display:inline-flex;align-items:center;font-size:11px;font-weight:800;padding:2px 9px;border-radius:11px;line-height:1.5;letter-spacing:.2px}
+/* Compact variant for the narrow board columns and lower/special columns. */
+.cotech.sm{font-size:9px;padding:1px 6px;border-radius:9px;letter-spacing:.1px}
+.jc .cotech-row{margin-top:4px;gap:3px}
+.jc .cotech-ico{font-size:10px}
 .tv-job{font-size:13px;font-weight:700;color:var(--tx);line-height:1.3;word-break:break-word;user-select:text;cursor:text}
 .tv-addr{font-size:10px;color:var(--dm2);margin-top:4px;line-height:1.4;user-select:text;cursor:text}
 .tv-show-all{display:block;width:100%;padding:14px;background:var(--ac);border:none;border-radius:var(--r12);color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:1px;text-transform:uppercase;margin-bottom:20px;transition:background .15s}
@@ -281,6 +285,124 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .spcol.split .sphalf .thdr{border-radius:0}
 .spcol.split .sphalf:first-child .thdr{border-radius:var(--r12) var(--r12) 0 0}
 .spcol.split .tjobs{overflow-y:auto;max-height:340px}
+
+/* Note button on lower/special column cards — the status dot, made clickable.
+   Mirrors the numbered badge on tech tickets (same orange .jnumdot indicator). */
+.spnotebtn{position:relative;width:14px;height:14px;border-radius:50%;flex-shrink:0;margin-top:2px;
+  border:none;padding:0;cursor:pointer;transition:transform .12s,box-shadow .12s}
+.spnotebtn:hover{transform:scale(1.25);box-shadow:0 0 0 3px rgba(255,255,255,.10)}
+.spcol .jc[data-spcard]{cursor:pointer}
+.spcol .jc[data-spcard]:hover{filter:brightness(1.15)}
+
+/* ════════════════════════════════════════════
+   MESSAGING PANEL — techs ↔ admins (Louis / Jon-Pol)
+   ════════════════════════════════════════════ */
+.msgfab{position:fixed;right:18px;bottom:18px;z-index:9500;width:56px;height:56px;border-radius:50%;
+  border:none;cursor:pointer;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;
+  box-shadow:0 8px 26px rgba(29,78,216,.45);font-size:23px;display:none;
+  align-items:center;justify-content:center;transition:transform .15s}
+.msgfab:hover{transform:scale(1.07)}
+.msgfab .msgbadge{position:absolute;top:-3px;right:-3px;min-width:21px;height:21px;padding:0 5px;
+  border-radius:11px;background:#ef4444;color:#fff;font-family:Inter,sans-serif;font-size:11px;
+  font-weight:800;display:none;align-items:center;justify-content:center;border:2px solid #0a0e1a}
+.msgbtn-badge{display:none;margin-left:5px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;
+  background:#ef4444;color:#fff;font-size:10px;font-weight:800;line-height:18px;text-align:center}
+
+.msgbg{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9600;display:none;backdrop-filter:blur(2px)}
+.msgbg.show{display:block}
+.msgpanel{position:fixed;top:0;right:0;bottom:0;width:min(420px,100vw);z-index:9601;
+  background:linear-gradient(170deg,#141c2e 0%,#0c1220 100%);border-left:1px solid var(--bd2);
+  display:none;flex-direction:column;font-family:'Inter',sans-serif;box-shadow:-14px 0 50px rgba(0,0,0,.5)}
+.msgpanel.show{display:flex}
+.msghdr{padding:14px 16px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.msghdr h4{margin:0;font-size:15px;font-weight:800;color:var(--tx);flex:1;letter-spacing:.2px}
+.msghdr button{background:transparent;border:1px solid var(--bd2);color:var(--dm2);border-radius:8px;
+  padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+.msghdr button:hover{color:#fff;border-color:var(--ac)}
+
+.msgto{display:flex;gap:6px;padding:10px 16px;border-bottom:1px solid var(--bd);flex-wrap:wrap;flex-shrink:0}
+.msgto button{flex:1;min-width:78px;padding:7px 8px;border-radius:8px;border:1px solid var(--bd2);
+  background:#0e1320;color:var(--dm2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s}
+.msgto button.on{background:linear-gradient(135deg,#3b82f6,#1d4ed8);border-color:transparent;color:#fff}
+
+.msglist{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.msgrow{display:flex;flex-direction:column;max-width:84%}
+.msgrow.mine{align-self:flex-end;align-items:flex-end}
+.msgrow.theirs{align-self:flex-start;align-items:flex-start}
+.msgbub{padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
+.msgrow.mine .msgbub{background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;border-bottom-right-radius:4px}
+.msgrow.theirs .msgbub{background:#1b2334;color:var(--tx);border:1px solid var(--bd);border-bottom-left-radius:4px}
+.msgmeta{font-size:10px;color:var(--dm);font-weight:700;margin-top:3px;padding:0 3px;letter-spacing:.3px}
+.msgempty{margin:auto;text-align:center;color:var(--dm);font-size:12px;font-weight:600;line-height:1.7;padding:20px}
+
+.msgthreads{flex:1;overflow-y:auto;min-height:0}
+.msgthread{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--bd);
+  cursor:pointer;transition:background .15s}
+.msgthread:hover{background:rgba(255,255,255,.04)}
+.msgthread .mtname{font-size:14px;font-weight:800;flex-shrink:0}
+.msgthread .mtprev{flex:1;font-size:12px;color:var(--dm2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msgthread .mtdot{width:9px;height:9px;border-radius:50%;background:#ef4444;flex-shrink:0}
+
+.msgcomp{border-top:1px solid var(--bd);padding:10px 12px;display:flex;gap:8px;align-items:flex-end;flex-shrink:0;background:#0b1120}
+.msgcomp textarea{flex:1;min-height:44px;max-height:130px;background:#0a1020;border:1px solid var(--bd2);
+  border-radius:11px;color:var(--tx);font-family:inherit;font-size:15px;padding:11px 12px;resize:none;
+  line-height:1.4;outline:none;transition:border-color .15s}
+.msgcomp textarea:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+.msgmic,.msgsend{width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;transition:all .15s}
+.msgmic{background:#1b2334;color:var(--dm2);border:1px solid var(--bd2)}
+.msgmic:hover{color:#fff}
+.msgmic.rec{background:#ef4444;color:#fff;border-color:transparent;animation:micpulse 1.3s ease-in-out infinite}
+@keyframes micpulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.65)}50%{box-shadow:0 0 0 11px rgba(239,68,68,0)}}
+.msgmic svg,.msgsend svg{width:19px;height:19px}
+.msgsend{background:linear-gradient(135deg,#22c55e,#15803d);color:#fff}
+.msgsend:disabled{opacity:.4;cursor:default}
+.msglang{position:absolute;right:14px;bottom:64px;background:#1b2334;border:1px solid var(--bd2);
+  color:var(--dm2);border-radius:7px;font-size:10px;font-weight:800;padding:3px 7px;cursor:pointer;font-family:inherit}
+.msglang:hover{color:#fff;border-color:var(--ac)}
+.msgstatus{padding:7px 16px;font-size:11px;font-weight:700;color:var(--dm);border-top:1px solid var(--bd);flex-shrink:0}
+@media(max-width:520px){.msgpanel{width:100vw}.msgfab{right:14px;bottom:14px}}
+
+/* ── PER-TECH INLINE CHAT WINDOW (admin board columns) ── */
+.tchatbtn{position:relative;flex-shrink:0;width:22px;height:22px;display:flex;align-items:center;
+  justify-content:center;border-radius:7px;border:1px solid var(--bd);background:var(--bg);
+  color:var(--dm2);cursor:pointer;padding:0;transition:all .15s}
+.tchatbtn:hover{color:#fff;border-color:currentColor}
+.tchatbtn svg{width:13px;height:13px}
+.tchatdot{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;padding:0 4px;
+  border-radius:8px;background:#ef4444;color:#fff;font-family:Inter,sans-serif;font-size:9px;
+  font-weight:800;line-height:15px;text-align:center;border:1.5px solid var(--sf2)}
+
+.tchat{border:1px solid;border-left:0;border-right:0;background:rgba(59,130,246,.05);
+  display:flex;flex-direction:column;flex-shrink:0}
+.tchathdr{display:flex;align-items:center;justify-content:space-between;padding:6px 9px;
+  font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase}
+.tchathdr button{background:transparent;border:none;color:var(--dm);cursor:pointer;
+  font-size:12px;padding:0 2px;line-height:1}
+.tchathdr button:hover{color:#fff}
+.tchatlist{max-height:170px;overflow-y:auto;padding:4px 8px 6px;display:flex;flex-direction:column;gap:5px}
+.tchatempty{text-align:center;color:var(--dm);font-size:10px;padding:8px;font-weight:600}
+.tchatrow{display:flex;flex-direction:column;max-width:92%}
+.tchatrow.mine{align-self:flex-end;align-items:flex-end}
+.tchatrow.theirs{align-self:flex-start;align-items:flex-start}
+.tchatbub{padding:6px 9px;border-radius:10px;font-size:12px;line-height:1.4;
+  word-break:break-word;white-space:pre-wrap;font-family:Inter,sans-serif}
+.tchatrow.mine .tchatbub{background:#1d4ed8;color:#fff;border-bottom-right-radius:3px}
+.tchatrow.theirs .tchatbub{background:#1b2334;color:var(--tx);border:1px solid var(--bd);border-bottom-left-radius:3px}
+.tchatrow.theirs .tchatbub.unread{border-color:#ef4444;box-shadow:0 0 0 1px rgba(239,68,68,.35)}
+.tchatmeta{font-size:9px;color:var(--dm);font-weight:700;margin-top:2px;padding:0 2px}
+.tchatcomp{display:flex;gap:5px;align-items:flex-end;padding:6px 8px;border-top:1px solid var(--bd)}
+.tchatcomp textarea{flex:1;min-height:30px;max-height:80px;background:#0a1020;border:1px solid var(--bd2);
+  border-radius:8px;color:var(--tx);font-family:Inter,sans-serif;font-size:12px;padding:7px 8px;
+  resize:none;line-height:1.35;outline:none}
+.tchatcomp textarea:focus{border-color:var(--ac)}
+.tchatmic,.tchatsend{width:30px;height:30px;border-radius:8px;border:none;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;color:#fff;transition:all .15s}
+.tchatmic{background:#1b2334;color:var(--dm2);border:1px solid var(--bd2)}
+.tchatmic:hover{color:#fff}
+.tchatmic.rec{background:#ef4444;color:#fff;border-color:transparent;animation:micpulse 1.3s ease-in-out infinite}
+.tchatmic svg,.tchatsend svg{width:14px;height:14px}
+.tchatsend{color:#04101f}
 
 /* ── RESHUFFLE (nearest-first) BUTTON IN TECH HEADER ── */
 .rsbtn{flex-shrink:0;width:22px;height:22px;display:flex;align-items:center;justify-content:center;
@@ -489,6 +611,49 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     <button type="button" class="jnotepop-btn danger" id="jnotepopClear" onclick="clearJobNote()">Clear</button>
     <button type="button" class="jnotepop-btn" onclick="closeJobNote()">Cancel</button>
     <button type="button" class="jnotepop-btn primary" onclick="saveJobNote()">Save</button>
+  </div>
+</div>
+
+<!-- ── MESSAGING PANEL (techs ↔ admins) ── -->
+<button class="msgfab" id="msgFab" onclick="openMessages()" title="Messages">
+  💬<span class="msgbadge" id="msgFabBadge">0</span>
+</button>
+<div class="msgbg" id="msgBg" onclick="closeMessages()"></div>
+<div class="msgpanel" id="msgPanel" role="dialog" aria-label="Messages">
+  <div class="msghdr">
+    <h4 id="msgTitle">Messages</h4>
+    <button onclick="closeMessages()">✕</button>
+  </div>
+
+  <!-- Recipient picker (techs only) -->
+  <div class="msgto" id="msgTo" style="display:none"></div>
+
+  <!-- Conversation -->
+  <div class="msglist" id="msgList"></div>
+
+  <div class="msgstatus" id="msgStatus" style="display:none"></div>
+
+  <div class="msgcomp" id="msgComp" style="position:relative">
+    <button class="msglang" id="msgLangBtn" onclick="msgToggleLang()" title="Dictation language">EN</button>
+    <textarea id="msgText" rows="1" placeholder="Type or tap the mic to speak..."
+      oninput="msgAutoGrow(this);msgSyncSend()"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!msgIsMobile()){event.preventDefault();sendMessage();}"></textarea>
+    <button class="msgmic" id="msgMic" onclick="msgToggleMic()" title="Speak your message">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+    </button>
+    <button class="msgsend" id="msgSend" onclick="sendMessage()" disabled title="Send">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- ── MORNING TEAM-UP POPUP (6:00 AM shared-job heads-up) ── -->
+<div class="modal-bg" id="teamUpBg" onclick="if(event.target===this)closeTeamUp()">
+  <div class="modal" style="max-width:460px">
+    <h3 id="teamUpTitle">Working Together Today</h3>
+    <div class="msub" id="teamUpSub"></div>
+    <div id="teamUpList" style="display:flex;flex-direction:column;gap:10px;max-height:52vh;overflow-y:auto"></div>
+    <button onclick="closeTeamUp()" style="width:100%;margin-top:20px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);border:none;border-radius:var(--r8);color:#fff;font-family:Inter,sans-serif;font-size:14px;font-weight:800;padding:11px;cursor:pointer">Got it</button>
   </div>
 </div>
 
@@ -747,7 +912,6 @@ const CONFIG = {
 // For production you can move PIN validation to a serverless function.
 const USERS = [
   { name:'Jon-Pol Martin',    pin:'2824', role:'admin' },
-  { name:'John Kelly',        pin:'1409', role:'write' },
   { name:'Dan Martin',        pin:'5506', role:'write' },
   { name:'Iris Payne',        pin:'4582', role:'write' },
   { name:'Jeff',              pin:'5012', role:'read', tech:'Jeff'      },
@@ -900,7 +1064,29 @@ let search = '', activeFilters = new Set(), statFilter = null;
 let mapTech = 'all';
 let lmap = null, markerLayer = null, routeLayer = null, markersArr = [];
 let lmapTech = null, markerLayerTech = null, routeLayerTech = null;
-const geoCache = {};       // address → {lat,lng}  (session cache)
+// address → {lat,lng}. Persisted to localStorage: Nominatim allows ~1 req/sec,
+// so a 26-ticket board costs ~40s of serial lookups. Caching across sessions
+// means that price is paid once per address, not once per page load.
+// Live counter for the "still locating addresses" placeholder.
+let geoProgress = null;
+
+const GEO_LS_KEY = 'wrs_geocache_v1';
+const geoCache = (() => {
+  try {
+    const raw = localStorage.getItem(GEO_LS_KEY);
+    if (!raw) return {};
+    const o = JSON.parse(raw);
+    return (o && typeof o === 'object') ? o : {};
+  } catch(e) { return {}; }
+})();
+
+let _geoSaveTimer = null;
+function persistGeoCache() {
+  clearTimeout(_geoSaveTimer);
+  _geoSaveTimer = setTimeout(() => {
+    try { localStorage.setItem(GEO_LS_KEY, JSON.stringify(geoCache)); } catch(e) {}
+  }, 400);
+}
 
 // Shop state: { tech: { shop, notes } }
 const SHOP_LOCATIONS = {
@@ -1008,18 +1194,19 @@ let shopModalTech = null, shopModalSelected = null;
         // time they auto-log-in — instead of being locked to whatever role
         // was snapshotted when they first signed in.
         const fresh = USERS.find(x => x.name === u.name);
-        // If the role has been changed in code since this user last signed
-        // in, their existing Worker token is still bound to the OLD role
-        // server-side — a promoted tech would see the admin UI but every
-        // write would come back rejected. Force a fresh PIN sign-in so the
-        // Worker mints a new token with the new role.
-        if (fresh && (fresh.role !== u.role || fresh.tech !== u.tech)) {
+        // Two reasons to force a fresh PIN sign-in:
+        //  1. The user was removed from USERS — drop their saved session
+        //     instead of auto-logging them in from the stale localStorage copy.
+        //  2. Their role/tech changed in code — their existing Worker token is
+        //     still bound to the OLD role server-side, so a promoted tech would
+        //     see the admin UI but have every write rejected.
+        if (!fresh || fresh.role !== u.role || fresh.tech !== u.tech) {
           authToken = null;
           localStorage.removeItem('wrs_user');
           localStorage.removeItem('wrs_token');
           // fall through to the normal login screen
         } else {
-          const user = fresh ? { ...u, ...fresh } : u;
+          const user = { ...u, ...fresh };   // fresh is guaranteed set in this branch
           authToken = savedToken;
           apiCall('/validate', {}).then(res => {
             if (res.valid) {
@@ -1245,6 +1432,7 @@ function startDash(user) {
   // Load Leaflet lazily, then fetch data (map won't block login)
   loadLeaflet(() => { loadData(); });
   startHeartbeat();
+  msgInit();
   if (curUser.role === 'admin') checkDuplicateLogins();
 }
 
@@ -1386,6 +1574,8 @@ async function loadData() {
     if (isTech && !viewingAll) renderTechView(false);
     else { render(); initMap(); updateMap(); }
     renderNotes();
+    // Runs on every load; self-guards on the 6 AM cutoff and the once-a-day key.
+    maybeShowTeamUp();
 
     // Geocode green jobs in background, then do the full map render with all coords
     geocodeGreenJobs().then(() => {
@@ -1444,6 +1634,7 @@ async function geocodeOne(addr, retries=3) {
       if (d.status === 'OK' && d.results?.[0]) {
         const loc = d.results[0].geometry.location;
         geoCache[addr] = { lat: loc.lat, lng: loc.lng };
+        persistGeoCache();
         return geoCache[addr];
       }
       // Key/account-level problems apply to every address, not just this one —
@@ -1469,6 +1660,7 @@ async function geocodeOne(addr, retries=3) {
       const d = await r.json();
       if (d && d.length) {
         geoCache[addr] = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+        persistGeoCache();
         return geoCache[addr];
       }
     } catch(e) { /* retry */ }
@@ -1492,6 +1684,8 @@ async function geocodeGreenJobs() {
   // Geocode regular green jobs that still lack coords
   const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !Object.keys(SHOP_LOCATIONS).includes(j.job));
   let anyNew = false;
+  let done = 0;
+  geoProgress = { done: 0, total: toGeo.length };
   for (const j of toGeo) {
     // Per-address guard: a single failure used to reject out of this loop and
     // kill the whole batch (and the updateMap() chained after it).
@@ -1499,8 +1693,18 @@ async function geocodeGreenJobs() {
       const c = await geocodeOne(j.address);
       if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
     } catch(e) { console.warn('Geocode failed for', j.address, e?.message || e); }
+    done++;
+    geoProgress.done = done;
+    // Draw as we go instead of making the dispatcher stare at a blank panel
+    // for the whole batch. Refresh every few hits (and always on the last).
+    if (anyNew && (done % 3 === 0 || done === toGeo.length)) {
+      try { if (!isTech || viewingAll) updateMap(); } catch(e) {}
+    } else if (!anyNew) {
+      try { updateMapProgress(); } catch(e) {}
+    }
     await new Promise(r => setTimeout(r, geoDelayMs()));
   }
+  geoProgress = null;
   return anyNew;
 }
 
@@ -1636,6 +1840,7 @@ function rBoard() {
   // Grab whatever the user has typed into ai_*/ai_addr_* inputs BEFORE we
   // wipe the board via innerHTML — otherwise sync races destroy their work.
   captureTicketDrafts();
+  captureChatDrafts();
   const fj = getFiltered();
   let h = '';
   const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : TECHS;
@@ -1664,9 +1869,15 @@ function rBoard() {
         title="Reorder ${tech}'s tickets: closest to their start location first">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
       </button>`:'<span style="width:22px"></span>'}
+      ${msgIsAdmin()?`<button type="button" class="tchatbtn" id="tcb_${tech}" style="color:${tc}"
+        onclick="event.stopPropagation();toggleTechChat('${tech}')" title="Messages with ${tech}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>
+        ${techUnread(tech)?`<span class="tchatdot">${techUnread(tech)}</span>`:''}
+      </button>`:''}
       <span class="tn" style="color:${tc}" onclick="openShopModal('${tech}')" title="Click to add shop visit">${tech}</span>
       <span class="tcnt">${tj.length}</span>
     </div>
+    ${techChatHTML(tech, tc)}
     <div class="tjobs" data-tech="${tech}">`;
     if (!tj.length) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
     else tj.forEach((j, idx) => { h += jobCard(j, canWrite, idx + 1, tc); });
@@ -1675,6 +1886,7 @@ function rBoard() {
   document.getElementById('board').innerHTML = h;
   // Repopulate persisted drafts + refocus whatever input the user was in.
   restoreTicketDrafts();
+  restoreChatDrafts();
   // (bindDrag moved to render() so the special columns get bound too)
 }
 
@@ -1720,11 +1932,16 @@ function rSpecialCols() {
     if (!sj.length) x += `<div style="text-align:center;padding:14px;color:var(--dm);font-size:10px">${s?'NO MATCH':'NONE'}</div>`;
     else sj.forEach(j => {
       const tc = TC[j.tech]||'#888';
-      x += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" data-spcard="1" style="border-left-color:${sc.color};background:${sc.color}10">
+      const hasNote = !!(j.notes && String(j.notes).trim());
+      x += `<div class="jc" data-id="${j.id}" data-row="${j.row}" data-col="${j.col}" data-spcard="1"${canWrite?` onclick="openJobNoteFromCard(event,${j.id})" title="${hasNote?'Click to edit note':'Click to add a note'}"`:''} style="border-left-color:${sc.color};background:${sc.color}10">
         ${canWrite?'<span class="draghandle" title="Drag to another column"><span></span></span>':''}
-        <span class="jsd" style="background:${sc.color}"></span>
+        ${canWrite
+          ? `<button type="button" class="spnotebtn" style="background:${sc.color}" title="${hasNote?'Edit note':'Add note'}" onclick="event.stopPropagation();openJobNote(${j.id})">${hasNote?'<span class="jnumdot"></span>':''}</button>`
+          : `<span class="jsd" style="background:${sc.color}"></span>`}
         <div class="jinfo">
           <span class="jn">${j.job}</span>
+          ${coTechBadges(j, true)}
+          ${hasNote?`<span class="jnotes">${String(j.notes).replace(/</g,'&lt;')}</span>`:''}
           <span class="ja" style="color:${tc}">${j.tech}${j.address?' — '+j.address:''}</span>
         </div>
         ${canWrite?`<button class="db" onclick="event.stopPropagation();delJob(${j.row},${j.col},${j.id})">✕</button>
@@ -1763,6 +1980,7 @@ function jobCard(j, editable, stopNum, techColor) {
     ${numBadge}
     <div class="jinfo">
       <span class="jn">${j.job}</span>
+      ${coTechBadges(j, true)}
       ${j.notes?`<span class="jnotes">${String(j.notes).replace(/</g,'&lt;')}</span>`:''}
       ${j.address?`<span class="ja">📍 ${j.address}</span>`:''}
     </div>
@@ -1992,6 +2210,623 @@ async function reshuffleTech(tech) {
   }
 }
 
+// ════════════════════════════════════════════
+//  MESSAGING — techs ↔ admins (Louis / Jon-Pol)
+//
+//  Storage lives in the Cloudflare Worker (/getMessages, /sendMessage), the
+//  same pattern as announcements and installs. Everything here degrades
+//  gracefully if those routes aren't deployed yet — the panel explains itself
+//  instead of throwing.
+//
+//  Read state is tracked client-side in localStorage (last-seen timestamp per
+//  thread) so the Worker only needs two routes instead of four.
+// ════════════════════════════════════════════
+
+// Admins are derived from the USERS table, so adding an admin there
+// automatically adds them as a message recipient — no second list to maintain.
+function msgAdmins() { return USERS.filter(u => u.role === 'admin').map(u => u.name); }
+function msgIsAdmin()  { return !!curUser && curUser.role === 'admin'; }
+function msgIsMobile() { return window.matchMedia('(max-width:820px)').matches; }
+
+let msgAll        = [];      // every message this user can see
+let msgOpen       = false;
+let msgToSel      = 'all';   // tech view: 'all' | admin name
+let msgBackend    = null;    // null = untested, true = live, false = not deployed
+let msgPollTimer  = null;
+const MSG_SEEN_KEY = 'wrs_msg_seen_v1';
+
+function msgSeen() {
+  try { return JSON.parse(localStorage.getItem(MSG_SEEN_KEY) || '{}'); } catch(e) { return {}; }
+}
+function msgMarkSeen(threadKey, ts) {
+  const s = msgSeen();
+  if (!s[threadKey] || ts > s[threadKey]) s[threadKey] = ts;
+  try { localStorage.setItem(MSG_SEEN_KEY, JSON.stringify(s)); } catch(e) {}
+}
+
+// A message belongs to the thread of whichever TECH is involved. Admin replies
+// carry toTech, so check that first — otherwise Louis (who is both an admin and
+// a tech) would file his own replies under his own thread instead of the tech's.
+function msgThreadKey(m) {
+  if (msgIsAdmin()) return m.toTech || m.fromTech || m.from;
+  return 'dispatch';
+}
+
+// ── Per-tech inline chat windows (admin view) ──
+// Instead of a separate inbox, each tech's board column grows a small chat
+// window. It opens itself the moment that tech sends something, so a message
+// lands in the dispatcher's eyeline next to that tech's tickets.
+let msgChatOpen = new Set();   // techs whose window is expanded
+
+// In-progress replies survive the 60s board rebuild, same idea as ticket drafts.
+const CHAT_DRAFT_KEY = 'wrs_chat_drafts_v1';
+let chatDrafts = (() => {
+  try { return JSON.parse(localStorage.getItem(CHAT_DRAFT_KEY) || '{}') || {}; }
+  catch(e) { return {}; }
+})();
+let _chatFocus = null;   // { tech, selStart, selEnd }
+
+function saveChatDrafts() {
+  try { localStorage.setItem(CHAT_DRAFT_KEY, JSON.stringify(chatDrafts)); } catch(e) {}
+}
+
+function captureChatDrafts() {
+  document.querySelectorAll('textarea[data-chattech]').forEach(ta => {
+    const t = ta.dataset.chattech;
+    if (ta.value.trim()) chatDrafts[t] = ta.value; else delete chatDrafts[t];
+    if (document.activeElement === ta) {
+      _chatFocus = { tech: t, selStart: ta.selectionStart, selEnd: ta.selectionEnd };
+    }
+  });
+  saveChatDrafts();
+}
+
+function restoreChatDrafts() {
+  Object.keys(chatDrafts).forEach(t => {
+    const ta = document.getElementById('tchat_ta_' + t);
+    if (ta && chatDrafts[t]) { ta.value = chatDrafts[t]; msgAutoGrow(ta); }
+  });
+  document.querySelectorAll('.tchatlist').forEach(el => { el.scrollTop = el.scrollHeight; });
+  if (_chatFocus) {
+    const ta = document.getElementById('tchat_ta_' + _chatFocus.tech);
+    if (ta) {
+      ta.focus();
+      try { ta.setSelectionRange(_chatFocus.selStart, _chatFocus.selEnd); } catch(e) {}
+    }
+  }
+}
+
+// Messages belonging to one tech's conversation.
+function techConv(tech) {
+  return msgAll
+    .filter(m => (m.toTech || m.fromTech || m.from) === tech)
+    .sort((a,b) => a.ts - b.ts);
+}
+
+function techUnread(tech) {
+  const seen = msgSeen()[tech] || 0;
+  return techConv(tech).filter(m => m.from !== curUser.name && m.ts > seen).length;
+}
+
+function techChatHTML(tech, tc) {
+  if (!msgIsAdmin()) return '';
+  const conv = techConv(tech);
+  if (!conv.length && !msgChatOpen.has(tech)) return '';
+  if (!msgChatOpen.has(tech)) return '';
+
+  const seen = msgSeen()[tech] || 0;
+  const body = conv.length
+    ? conv.map(m => {
+        const mine = m.from === curUser.name;
+        const isNew = !mine && m.ts > seen;
+        return `<div class="tchatrow ${mine?'mine':'theirs'}">
+          <div class="tchatbub${isNew?' unread':''}">${msgEsc(m.text)}</div>
+          <div class="tchatmeta">${mine?'You':msgEsc(m.from)} · ${msgTime(m.ts)}</div>
+        </div>`;
+      }).join('')
+    : `<div class="tchatempty">No messages yet</div>`;
+
+  return `<div class="tchat" style="border-color:${tc}45">
+    <div class="tchathdr" style="color:${tc}">
+      <span>Messages — ${tech}</span>
+      <button onclick="toggleTechChat('${tech}')" title="Close">✕</button>
+    </div>
+    <div class="tchatlist" id="tchat_list_${tech}">${body}</div>
+    <div class="tchatcomp">
+      <textarea id="tchat_ta_${tech}" data-chattech="${tech}" rows="1" placeholder="Reply to ${tech}…"
+        oninput="msgAutoGrow(this);captureChatDrafts()"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!msgIsMobile()){event.preventDefault();sendTechReply('${tech}');}"></textarea>
+      ${msgSpeechSupported()?`<button class="tchatmic" id="tchat_mic_${tech}" onclick="msgToggleMic('tchat_ta_${tech}')" title="Speak your reply">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      </button>`:''}
+      <button class="tchatsend" style="background:${tc}" onclick="sendTechReply('${tech}')" title="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>`;
+}
+
+// Update just the unread pips on the column chat buttons. Cheaper than a
+// board rebuild, and it won't yank focus out of a reply someone is typing.
+function refreshChatBadges() {
+  TECHS.forEach(t => {
+    const btn = document.getElementById('tcb_' + t);
+    if (!btn) return;
+    const n = techUnread(t);
+    let dot = btn.querySelector('.tchatdot');
+    if (n && !dot) {
+      dot = document.createElement('span');
+      dot.className = 'tchatdot';
+      btn.appendChild(dot);
+    }
+    if (dot) { dot.textContent = n; dot.style.display = n ? '' : 'none'; }
+  });
+  // Refresh the contents of any window that's already open.
+  msgChatOpen.forEach(t => {
+    const listEl = document.getElementById('tchat_list_' + t);
+    if (!listEl) return;
+    const conv = techConv(t);
+    const seen = msgSeen()[t] || 0;
+    listEl.innerHTML = conv.length ? conv.map(m => {
+      const mine = m.from === curUser.name;
+      const isNew = !mine && m.ts > seen;
+      return `<div class="tchatrow ${mine?'mine':'theirs'}">
+        <div class="tchatbub${isNew?' unread':''}">${msgEsc(m.text)}</div>
+        <div class="tchatmeta">${mine?'You':msgEsc(m.from)} · ${msgTime(m.ts)}</div>
+      </div>`;
+    }).join('') : `<div class="tchatempty">No messages yet</div>`;
+    listEl.scrollTop = listEl.scrollHeight;
+  });
+}
+
+function toggleTechChat(tech) {
+  // Closing always marks the thread read. That's what stops it springing back
+  // open on the next poll — and it means a genuinely NEW message later will
+  // reopen it, which is what a dispatcher wants.
+  if (msgChatOpen.has(tech)) { markTechRead(tech); msgChatOpen.delete(tech); }
+  else { msgChatOpen.add(tech); markTechRead(tech); }
+  rBoard();
+  restoreChatDrafts();
+  if (canWrite) bindDrag();
+}
+
+function markTechRead(tech) {
+  const conv = techConv(tech);
+  if (conv.length) msgMarkSeen(tech, conv[conv.length-1].ts);
+  msgRefreshBadge();
+}
+
+async function sendTechReply(tech) {
+  const ta = document.getElementById('tchat_ta_' + tech);
+  if (!ta) return;
+  const text = (ta.value || '').trim();
+  if (!text) return;
+  msgStopMic();
+
+  const optimistic = {
+    id: 'tmp_' + Date.now(), from: curUser.name, fromTech: null,
+    to: tech, toTech: tech, text, ts: Date.now(), pending: true,
+  };
+  msgAll.push(optimistic);
+  ta.value = ''; delete chatDrafts[tech]; saveChatDrafts();
+  _chatFocus = null;
+  rBoard(); restoreChatDrafts(); if (canWrite) bindDrag();
+
+  try {
+    await apiCall('/sendMessage', { to: tech, text });
+    await msgLoad(true);
+  } catch (e) {
+    msgAll = msgAll.filter(m => m.id !== optimistic.id);
+    chatDrafts[tech] = text; saveChatDrafts();
+    rBoard(); restoreChatDrafts(); if (canWrite) bindDrag();
+    const em = String(e && e.message || '');
+    if (/404|501|not found/i.test(em)) toast('Messaging backend not deployed yet');
+    else toast('Reply failed to send');
+  }
+}
+
+// Pop a tech's window open when an unread message is sitting in their thread.
+// Closing a window marks it read, so this only fires on genuinely new traffic.
+function msgAutoOpenNew() {
+  if (!msgIsAdmin()) return false;
+  let changed = false;
+  TECHS.forEach(t => {
+    if (techUnread(t) > 0 && !msgChatOpen.has(t)) { msgChatOpen.add(t); changed = true; }
+  });
+  return changed;
+}
+
+function msgVisible() {
+  if (!curUser) return [];
+  if (msgIsAdmin()) return msgAll;
+  // Everyone else sees only their own conversation. Note that 'all' means
+  // "all admins" — it must NOT make a tech's message visible to write-role
+  // office staff who aren't admins.
+  return msgAll.filter(m => m.from === curUser.name || m.to === curUser.name);
+}
+
+function msgUnreadCount() {
+  const seen = msgSeen();
+  return msgVisible().filter(m =>
+    m.from !== curUser.name && m.ts > (seen[msgThreadKey(m)] || 0)
+  ).length;
+}
+
+function msgRefreshBadge() {
+  const n = msgUnreadCount();
+  const fab = document.getElementById('msgFabBadge');
+  const btn = document.getElementById('msgBtnBadge');
+  [fab, btn].forEach(el => {
+    if (!el) return;
+    el.textContent = n > 99 ? '99+' : n;
+    el.style.display = n ? (el === fab ? 'flex' : 'inline-block') : 'none';
+  });
+}
+
+async function msgLoad(quiet) {
+  if (!curUser) return;
+  try {
+    const res = await apiCall('/getMessages', {});
+    msgAll = (res.messages || []).slice().sort((a,b) => a.ts - b.ts);
+    msgBackend = true;
+  } catch (e) {
+    // A 404/501 means the Worker routes aren't live yet — that's a deploy step,
+    // not a crash. Anything else is a real error worth surfacing once.
+    const m = String(e && e.message || '');
+    msgBackend = /404|501|not found/i.test(m) ? false : msgBackend;
+    if (!quiet) console.warn('Messages unavailable:', m);
+  }
+  msgRefreshBadge();
+  if (msgOpen) msgRender();
+  // A new message from a tech pops that tech's column window open.
+  if (msgAutoOpenNew() && !isTech) { rBoard(); restoreChatDrafts(); if (canWrite) bindDrag(); }
+  else if (msgIsAdmin() && !isTech) refreshChatBadges();
+}
+
+function openMessages() {
+  if (!curUser) return;
+  msgOpen = true;
+  document.getElementById('msgBg').classList.add('show');
+  document.getElementById('msgPanel').classList.add('show');
+  msgRender();
+  msgLoad();
+  clearInterval(msgPollTimer);
+  msgPollTimer = setInterval(() => msgLoad(true), 15000); // faster poll while open
+}
+
+function closeMessages() {
+  msgOpen = false;
+  msgStopMic();
+  document.getElementById('msgBg').classList.remove('show');
+  document.getElementById('msgPanel').classList.remove('show');
+  clearInterval(msgPollTimer);
+  msgPollTimer = null;
+  msgRefreshBadge();
+}
+
+function msgSetTo(v) { msgToSel = v; msgRender(); }
+
+function msgRender() {
+  const listEl    = document.getElementById('msgList');
+  const toEl      = document.getElementById('msgTo');
+  const titleEl   = document.getElementById('msgTitle');
+  const compEl    = document.getElementById('msgComp');
+  const statusEl  = document.getElementById('msgStatus');
+
+  // Backend not deployed yet — say so plainly rather than showing an empty box.
+  if (msgBackend === false) {
+    toEl.style.display = 'none';
+    compEl.style.display = 'none';
+    listEl.style.display = 'flex';
+    listEl.innerHTML = `<div class="msgempty">Messaging isn't switched on yet.<br><br>
+      The <b>/getMessages</b> and <b>/sendMessage</b> routes still need to be added
+      to the Worker at <b>api-test.wrsrepairs.com</b>.<br><br>
+      Everything else on this page works normally.</div>`;
+    return;
+  }
+
+  // ── Conversation view (techs only — admins use the per-column windows) ──
+  listEl.style.display = 'flex';
+  compEl.style.display = 'flex';
+  titleEl.textContent = 'Message Dispatch';
+
+  toEl.style.display = 'flex';
+  const admins = msgAdmins();
+  toEl.innerHTML =
+    `<button class="${msgToSel==='all'?'on':''}" onclick="msgSetTo('all')">Both</button>` +
+    admins.map(a => {
+      const short = a.split(' ')[0];
+      return `<button class="${msgToSel===a?'on':''}" onclick="msgSetTo('${a.replace(/'/g,"\\'")}')">${short}</button>`;
+    }).join('');
+
+  const conv = msgVisible();
+  if (!conv.length) {
+    listEl.innerHTML = `<div class="msgempty">No messages yet.<br>Tap the mic and speak, or type below.</div>`;
+  } else {
+    listEl.innerHTML = conv.map(m => {
+      const mine = m.from === curUser.name;
+      return `<div class="msgrow ${mine?'mine':'theirs'}">
+        <div class="msgbub">${msgEsc(m.text)}</div>
+        <div class="msgmeta">${mine?'You':msgEsc(m.from)} · ${msgTime(m.ts)}${
+          mine && m.to === 'all' ? ' · to all admins' : ''}</div>
+      </div>`;
+    }).join('');
+    listEl.scrollTop = listEl.scrollHeight;
+    // Opening the panel marks the conversation read up to its newest message.
+    msgMarkSeen('dispatch', conv[conv.length-1].ts);
+    msgRefreshBadge();
+  }
+  statusEl.style.display = 'none';
+  msgSyncSend();
+}
+
+function msgEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function msgTime(ts) {
+  const d = new Date(ts), now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' })
+    : d.toLocaleDateString([], { month:'short', day:'numeric' }) + ' ' +
+      d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+}
+
+function msgAutoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 130) + 'px';
+}
+function msgSyncSend() {
+  const ta = document.getElementById('msgText');
+  const btn = document.getElementById('msgSend');
+  if (ta && btn) btn.disabled = !ta.value.trim();
+}
+
+async function sendMessage() {
+  const ta = document.getElementById('msgText');
+  const text = (ta.value || '').trim();
+  if (!text || !curUser) return;
+  msgStopMic();
+
+  // The slide-over panel is the TECH side only; admins reply from the
+  // per-column windows via sendTechReply().
+  const to = msgToSel;   // 'all' or a specific admin name
+  const optimistic = {
+    id: 'tmp_' + Date.now(),
+    from: curUser.name,
+    fromTech: curUser.tech || null,
+    to,
+    toTech: null,
+    text,
+    ts: Date.now(),
+    pending: true,
+  };
+  msgAll.push(optimistic);
+  ta.value = ''; msgAutoGrow(ta); msgSyncSend();
+  msgRender();
+
+  try {
+    await apiCall('/sendMessage', { to, text });
+    await msgLoad(true);   // pull back the server copy (real id + timestamp)
+  } catch (e) {
+    msgAll = msgAll.filter(m => m.id !== optimistic.id);
+    msgRender();
+    const m = String(e && e.message || '');
+    if (/404|501|not found/i.test(m)) { msgBackend = false; msgRender(); }
+    else { toast('Message failed to send'); ta.value = text; msgAutoGrow(ta); msgSyncSend(); }
+  }
+}
+
+// ── Speech to text (Web Speech API) ──
+// Chrome/Edge desktop + Android, and Safari on iOS 14.5+. Requires HTTPS,
+// which GitHub Pages provides. Unsupported browsers just don't get the mic.
+let msgRec = null, msgRecOn = false, msgSttBase = '', msgSttFinal = '';
+let msgLang = localStorage.getItem('wrs_msg_lang') || 'en-US';
+
+function msgSpeechSupported() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+function msgToggleLang() {
+  msgLang = msgLang === 'en-US' ? 'es-US' : 'en-US';
+  try { localStorage.setItem('wrs_msg_lang', msgLang); } catch(e) {}
+  const b = document.getElementById('msgLangBtn');
+  if (b) b.textContent = msgLang === 'en-US' ? 'EN' : 'ES';
+  if (msgRecOn) { msgStopMic(); setTimeout(msgStartMic, 250); } // restart in the new language
+}
+
+// targetId lets the same engine drive the tech panel textarea and each
+// per-column reply box, so there's only one speech implementation to maintain.
+let msgMicTarget = 'msgText';
+
+function msgToggleMic(targetId) {
+  const t = targetId || 'msgText';
+  if (msgRecOn && msgMicTarget === t) { msgStopMic(); return; }
+  if (msgRecOn) msgStopMic();          // switching boxes mid-dictation
+  msgMicTarget = t;
+  msgStartMic();
+}
+
+function msgStartMic() {
+  if (!msgSpeechSupported()) { toast('Speech input is not supported in this browser'); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const ta = document.getElementById(msgMicTarget);
+  if (!ta) return;
+  msgRec = new SR();
+  msgRec.lang = msgLang;
+  msgRec.continuous = true;      // let them talk in full sentences
+  msgRec.interimResults = true;  // show words as they land
+
+  msgSttBase  = ta.value ? ta.value.replace(/\s*$/, ' ') : '';
+  msgSttFinal = '';
+
+  msgRec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) msgSttFinal += t + ' ';
+      else interim += t;
+    }
+    ta.value = (msgSttBase + msgSttFinal + interim).replace(/^\s+/, '');
+    msgAutoGrow(ta);
+    if (msgMicTarget === 'msgText') msgSyncSend(); else captureChatDrafts();
+  };
+
+  msgRec.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      toast('Microphone blocked — allow mic access in your browser settings');
+    } else if (e.error === 'no-speech') {
+      toast('Didn\'t catch that — try again');
+    } else if (e.error === 'network') {
+      toast('Speech service unreachable — check your signal');
+    }
+    msgStopMic();
+  };
+
+  // Mobile browsers end the session on their own after a pause. Restart while
+  // the user still has the mic toggled on so a long message isn't cut off.
+  msgRec.onend = () => {
+    if (msgRecOn) { try { msgRec.start(); return; } catch(e) {} }
+    msgSetMicUI(false);
+  };
+
+  try { msgRec.start(); msgRecOn = true; msgSetMicUI(true); }
+  catch(e) { toast('Could not start the microphone'); msgSetMicUI(false); }
+}
+
+function msgStopMic() {
+  msgRecOn = false;
+  if (msgRec) { try { msgRec.stop(); } catch(e) {} }
+  msgSetMicUI(false);
+}
+
+function msgSetMicUI(on) {
+  // Clear every mic button, then light the active one — prevents a stale red
+  // dot on a column whose window was rebuilt mid-dictation.
+  document.querySelectorAll('.msgmic,.tchatmic').forEach(b => b.classList.remove('rec'));
+  if (!on) return;
+  const id = msgMicTarget === 'msgText' ? 'msgMic' : msgMicTarget.replace('tchat_ta_', 'tchat_mic_');
+  const b = document.getElementById(id);
+  if (b) b.classList.add('rec');
+}
+
+// Wire the panel up once a user is logged in.
+function msgInit() {
+  if (!curUser) return;
+  // Admins read and reply in the per-column windows, so they don't get the
+  // floating button — it would just duplicate what's already on the board.
+  const fab = document.getElementById('msgFab');
+  if (fab) fab.style.display = msgIsAdmin() ? 'none' : 'flex';
+  const mic = document.getElementById('msgMic');
+  const lng = document.getElementById('msgLangBtn');
+  if (!msgSpeechSupported()) {
+    if (mic) mic.style.display = 'none';
+    if (lng) lng.style.display = 'none';
+  } else if (lng) {
+    lng.textContent = msgLang === 'en-US' ? 'EN' : 'ES';
+  }
+  msgLoad(true);
+}
+
+// ════════════════════════════════════════════
+//  MORNING TEAM-UP POPUP
+//  At 6:00 AM (or first load after it), anyone scheduled alongside another
+//  tech gets a one-time heads-up naming the job and who's joining them.
+// ════════════════════════════════════════════
+const TEAMUP_HOUR = 6;
+
+// Local calendar date — NOT toISOString(), which is UTC and would roll the
+// key over at 8pm Eastern and re-fire the popup the same evening.
+function localDayKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function teamUpSeenKey() { return `wrs_teamup_${localDayKey()}_${curUser ? curUser.name : ''}`; }
+
+// Collapse today's shared jobs into one entry per site, listing every tech on
+// it. Without the grouping a two-tech job would appear twice — once from each
+// side of the pairing.
+function getTeamUpGroups() {
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const SHOP = new Set(Object.keys(SHOP_LOCATIONS));
+  const groups = new Map();
+  jobs.forEach(j => {
+    if (!COTECH_ACTIVE.includes(j.color)) return;
+    if (j.tech === 'QUE' || j.col === QUE_COL) return;
+    if (SHOP.has(j.job)) return;
+    const co = getCoTechs(j);
+    if (!co.length) return;
+    const key = norm(j.job) || norm(j.address);
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, { name: j.job, address: j.address, techs: new Set() });
+    const g = groups.get(key);
+    if (!g.address && j.address) g.address = j.address;
+    g.techs.add(j.tech);
+    co.forEach(t => g.techs.add(t));
+  });
+  return [...groups.values()]
+    .map(g => ({ ...g, techs: [...g.techs].sort((a,b) => TECHS.indexOf(a) - TECHS.indexOf(b)) }))
+    .sort((a,b) => a.name.localeCompare(b.name));
+}
+
+function maybeShowTeamUp() {
+  if (!curUser) return;
+
+  // Field staff only. Dispatch (Jon-Pol, John, Dan, Iris) already has the whole
+  // board in front of them with the co-tech badges on every card, so a popup
+  // would just be something to dismiss every morning.
+  const myTech = curUser.tech && TECHS.includes(curUser.tech) ? curUser.tech : null;
+  if (!myTech) return;
+
+  // Admins don't get notified either — this covers Louis, who has a tech column
+  // but doesn't need the 6 AM nudge. He is NOT excluded from getCoTechs(), so
+  // he still shows up as a badge on his teammates' cards and gets named in
+  // their popups. This only suppresses his own.
+  if (curUser.role === 'admin') return;
+
+  if (new Date().getHours() < TEAMUP_HOUR) return;         // not yet 6 AM
+  try { if (localStorage.getItem(teamUpSeenKey())) return; } catch(e) {}
+
+  const groups = getTeamUpGroups().filter(g => g.techs.includes(myTech));
+  if (!groups.length) return;
+
+  showTeamUp(groups, myTech);
+}
+
+function showTeamUp(groups, myTech) {
+  const sub  = document.getElementById('teamUpSub');
+  const list = document.getElementById('teamUpList');
+  const ttl  = document.getElementById('teamUpTitle');
+
+  ttl.textContent = "You're Not Alone Today";
+  sub.textContent = `${groups.length} of your job${groups.length===1?'':'s'} today ${groups.length===1?'has':'have'} another tech on it.`;
+
+  list.innerHTML = groups.map(g => {
+    // Always "who's joining you" — never list the viewer back to themselves.
+    const pills = g.techs.filter(t => t !== myTech).map(t => {
+      const col = TC[t] || '#888';
+      return `<span class="cotech" style="background:${col};color:${textOnColor(col)}">${t}</span>`;
+    }).join('');
+    return `<div style="background:var(--bg);border:1px solid var(--bd);border-radius:var(--r8);padding:11px 13px">
+      <div style="font-size:14px;font-weight:800;color:var(--tx);line-height:1.3;word-break:break-word">${msgEsc(g.name)}</div>
+      ${g.address?`<div style="font-size:11px;color:var(--dm2);margin-top:3px">📍 ${msgEsc(g.address)}</div>`:''}
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:8px">
+        <span style="font-size:11px;color:var(--dm2);font-weight:700">Joining you:</span>${pills}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('teamUpBg').classList.add('open');
+}
+
+function closeTeamUp() {
+  document.getElementById('teamUpBg').classList.remove('open');
+  // Dismiss for the rest of the calendar day, per user.
+  try { localStorage.setItem(teamUpSeenKey(), '1'); } catch(e) {}
+}
+
 // ── Status dropdown ──
 function openDD(id, el) {
   if (!canWrite) return;
@@ -2040,6 +2875,17 @@ function openJobNote(id) {
   pop.style.top  = '50%';
   pop.style.transform = 'translate(-50%, -50%)';
   setTimeout(() => ta.focus(), 50);
+}
+
+// Clicking anywhere on a lower/special column card opens its note. Ignores
+// clicks on the inner controls (✕, status caret, drag handle) and ignores a
+// click that was really the end of a text selection, so addresses stay
+// copy-pasteable.
+function openJobNoteFromCard(e, id) {
+  if (!canWrite) return;
+  if (e.target.closest('button, .draghandle')) return;
+  if ((window.getSelection()?.toString() || '').trim()) return;
+  openJobNote(id);
 }
 
 function closeJobNote() {
@@ -3742,7 +4588,7 @@ function initMap() {
 
 // Geocode all tech home addresses once. Cached coords stick on TECH_START_LOCATIONS.
 // PRIVACY: only run this for admin + write-access sessions (dispatchers like
-// John Kelly and Dan Martin who plan routes). Read-only techs never have
+// Dan Martin who plans routes). Read-only techs never have
 // their browser fetch other techs' home coordinates.
 async function geocodeTechHomes() {
   if (homesGeocoded) return;
@@ -3795,6 +4641,13 @@ function togMap() {
   else{w.style.display='none';b.textContent='Show Map';}
 }
 
+// Cheap text-only refresh of the placeholder — avoids a full updateMap() on
+// every single geocode tick.
+function updateMapProgress() {
+  const el = document.getElementById('geoProgressMsg');
+  if (el && geoProgress) el.textContent = `Locating ticket addresses… ${geoProgress.done} of ${geoProgress.total}`;
+}
+
 function updateMap() {
   const sec=document.getElementById('mapsec');
   const tj=jobs.filter(j=>j.color==='green'&&j.lat&&j.lng);
@@ -3807,9 +4660,11 @@ function updateMap() {
     sec.style.display='';
     const msg = leafletFailed
       ? 'Map library failed to load. Check the connection and refresh — tickets are unaffected.'
-      : `Locating ${awaiting} ticket address${awaiting===1?'':'es'}…`;
+      : (geoProgress
+          ? `Locating ticket addresses… ${geoProgress.done} of ${geoProgress.total}`
+          : `Locating ${awaiting} ticket address${awaiting===1?'':'es'}…`);
     const mw = document.getElementById('mapwrap');
-    if (mw) mw.innerHTML = `<div style="padding:26px 18px;text-align:center;color:var(--dm2);font-size:13px;font-weight:600">${msg}</div>`;
+    if (mw) mw.innerHTML = `<div style="padding:26px 18px;text-align:center;color:var(--dm2);font-size:13px;font-weight:600"><span id="geoProgressMsg">${msg}</span></div>`;
     return;
   }
 
@@ -4052,6 +4907,20 @@ async function renderTechView(withMap=true) {
 }
 
 // Pick black or white text for readability on a given hex background.
+// Small colored name pills for the other techs at the same site.
+// `compact` shrinks them for the narrow board columns.
+function coTechBadges(job, compact) {
+  const co = getCoTechs(job);
+  if (!co.length) return '';
+  const cls = compact ? 'cotech sm' : 'cotech';
+  return `<div class="cotech-row"><span class="cotech-ico" title="Also on this job today">👥</span>${
+    co.map(t => {
+      const col = TC[t] || '#888';
+      return `<span class="${cls}" style="background:${col};color:${textOnColor(col)}">${t}</span>`;
+    }).join('')
+  }</div>`;
+}
+
 function textOnColor(hex) {
   const c = (hex || '').replace('#', '');
   if (c.length < 6) return '#fff';
@@ -4063,8 +4932,17 @@ function textOnColor(hex) {
 // Find other techs scheduled at the SAME site as `job` today.
 // "Same site" = matching address OR matching job name (normalized). Shop
 // check-ins and the QUE holding column are excluded so they don't false-team.
+// Statuses that count as "on the schedule today". Installs are included
+// because a two-tech installation is exactly the case this badge is for.
+const COTECH_ACTIVE = ['green','inst'];
+
 function getCoTechs(job) {
   if (!job) return [];
+  if (!COTECH_ACTIVE.includes(job.color)) return [];
+  // QUE is a holding column, not a person — "who's joining you" is meaningless
+  // on a QUE card. It's already excluded as a co-tech below; this excludes it
+  // as a subject too.
+  if (job.tech === 'QUE' || job.col === QUE_COL) return [];
   const SHOP = new Set(Object.keys(SHOP_LOCATIONS));
   const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   const myA = norm(job.address), myN = norm(job.job);
@@ -4072,7 +4950,7 @@ function getCoTechs(job) {
   jobs.forEach(o => {
     if (o.id === job.id) return;
     if (o.tech === job.tech) return;            // same person
-    if (o.color !== 'green') return;            // only active tickets
+    if (!COTECH_ACTIVE.includes(o.color)) return;      // only today's work
     if (o.tech === 'QUE' || o.col === QUE_COL) return; // QUE isn't a person
     if (SHOP.has(o.job)) return;                // shop check-ins aren't a shared site
     const oA = norm(o.address), oN = norm(o.job);
@@ -4101,12 +4979,7 @@ function buildTechCards(allStops, legsById, totalMin, totalMi, tc, dark) {
     // legsById is keyed by allStops index — leg[i] = time from stop i to next geocoded stop
     const leg = legsById ? legsById[i] : null;
     // Other techs on the same site today → small colored name badges in the header
-    const coTechs = s.isShop ? [] : getCoTechs(s.jobRef);
-    const coBadges = coTechs.length
-      ? `<div class="cotech-row"><span class="cotech-ico" title="Also on this site today">👥</span>${
-          coTechs.map(t => { const col = TC[t] || '#888'; return `<span class="cotech" style="background:${col};color:${textOnColor(col)}">${t}</span>`; }).join('')
-        }</div>`
-      : '';
+    const coBadges = s.isShop ? '' : coTechBadges(s.jobRef, false);
     h+=`<div class="tv-card" style="${s.isShop?'border-left:3px solid '+tc+';background:rgba(255,255,255,.03)':''}">
       <div class="tv-num" style="background:${tc};color:${dark?'#fff':'#000'};flex-shrink:0">${s.label}</div>
       <div style="flex:1;min-width:0;user-select:text">
@@ -4514,7 +5387,7 @@ document.addEventListener('keydown', e => {
   }
 });
 
-setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
+setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } if(curUser && !msgOpen) msgLoad(true); }, 60000);
 
 // ── Live clock for tech view datetime header ──
 setInterval(() => {
