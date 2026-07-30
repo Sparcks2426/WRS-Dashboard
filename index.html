@@ -293,6 +293,11 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .spnotebtn:hover{transform:scale(1.25);box-shadow:0 0 0 3px rgba(255,255,255,.10)}
 .spcol .jc[data-spcard]{cursor:pointer}
 .spcol .jc[data-spcard]:hover{filter:brightness(1.15)}
+/* Text stays selectable and shows an I-beam even though the card is clickable,
+   so a name can be highlighted and copied without opening the note popup. */
+.spcol .jc[data-spcard] .jn,
+.spcol .jc[data-spcard] .ja,
+.spcol .jc[data-spcard] .jnotes{user-select:text;-webkit-user-select:text;cursor:text}
 
 /* ════════════════════════════════════════════
    MESSAGING PANEL — techs ↔ admins (Louis / Jon-Pol)
@@ -2413,8 +2418,14 @@ async function sendTechReply(tech) {
   rBoard(); restoreChatDrafts(); if (canWrite) bindDrag();
 
   try {
-    await apiCall('/sendMessage', { to: tech, text });
-    await msgLoad(true);
+    // Use the message the Worker echoes back (real id + server timestamp).
+    // Refetching here would race KV's eventually-consistent listing and drop
+    // the message that was just sent.
+    const res = await apiCall('/sendMessage', { to: tech, text });
+    const i = msgAll.findIndex(m => m.id === optimistic.id);
+    if (res && res.message) { if (i >= 0) msgAll[i] = res.message; else msgAll.push(res.message); }
+    else if (i >= 0) delete msgAll[i].pending;
+    rBoard(); restoreChatDrafts(); if (canWrite) bindDrag();
   } catch (e) {
     msgAll = msgAll.filter(m => m.id !== optimistic.id);
     chatDrafts[tech] = text; saveChatDrafts();
@@ -2467,7 +2478,17 @@ async function msgLoad(quiet) {
   if (!curUser) return;
   try {
     const res = await apiCall('/getMessages', {});
-    msgAll = (res.messages || []).slice().sort((a,b) => a.ts - b.ts);
+    const server = res.messages || [];
+    const serverIds = new Set(server.map(m => m.id));
+    // MERGE, don't replace. Cloudflare KV list() is eventually consistent —
+    // a message written seconds ago may not appear in the listing yet. A
+    // wholesale replace therefore DELETED messages we already knew about,
+    // including one the user had just sent. Hold anything recent that the
+    // server hasn't caught up to; it ages out once the listing includes it.
+    const notYetListed = msgAll.filter(m =>
+      !serverIds.has(m.id) && (Date.now() - (m.ts || 0)) < 5 * 60 * 1000
+    );
+    msgAll = server.concat(notYetListed).sort((a,b) => a.ts - b.ts);
     msgBackend = true;
   } catch (e) {
     // A 404/501 means the Worker routes aren't live yet — that's a deploy step,
@@ -2608,8 +2629,11 @@ async function sendMessage() {
   msgRender();
 
   try {
-    await apiCall('/sendMessage', { to, text });
-    await msgLoad(true);   // pull back the server copy (real id + timestamp)
+    const res = await apiCall('/sendMessage', { to, text });
+    const i = msgAll.findIndex(m => m.id === optimistic.id);
+    if (res && res.message) { if (i >= 0) msgAll[i] = res.message; else msgAll.push(res.message); }
+    else if (i >= 0) delete msgAll[i].pending;
+    msgRender();
   } catch (e) {
     msgAll = msgAll.filter(m => m.id !== optimistic.id);
     msgRender();
@@ -2884,6 +2908,10 @@ function openJobNote(id) {
 function openJobNoteFromCard(e, id) {
   if (!canWrite) return;
   if (e.target.closest('button, .draghandle')) return;
+  // The text itself is for reading and copying — clicking or dragging across
+  // the job name, address, or an existing note must never open the popup.
+  // Notes are opened from the status dot, or from the card's empty area.
+  if (e.target.closest('.jn, .ja, .jnotes')) return;
   if ((window.getSelection()?.toString() || '').trim()) return;
   openJobNote(id);
 }
