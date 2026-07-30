@@ -2512,7 +2512,8 @@ function openMessages() {
   msgRender();
   msgLoad();
   clearInterval(msgPollTimer);
-  msgPollTimer = setInterval(() => msgLoad(true), 15000); // faster poll while open
+  // Faster cadence while the panel is open — still skipped if the tab is hidden.
+  msgPollTimer = setInterval(() => { if (document.visibilityState === 'visible') msgLoad(true); }, 15000);
 }
 
 function closeMessages() {
@@ -2752,6 +2753,7 @@ function msgInit() {
     lng.textContent = msgLang === 'en-US' ? 'EN' : 'ES';
   }
   msgLoad(true);
+  msgSchedulePoll(MSG_POLL_BASE);
 }
 
 // ════════════════════════════════════════════
@@ -5415,7 +5417,51 @@ document.addEventListener('keydown', e => {
   }
 });
 
-setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } if(curUser && !msgOpen) msgLoad(true); }, 60000);
+setInterval(()=>{ if(curUser && !isSaving) { loadData(); if(curUser.role==='admin') checkDuplicateLogins(); } }, 60000);
+
+// ════════════════════════════════════════════
+//  MESSAGE POLLING — adaptive, and paused on a hidden tab
+//  Every poll costs one Cloudflare KV list operation, and the free tier
+//  allows only 1,000 a day. A fixed 60s interval meant a single browser tab
+//  left open overnight burned 1,440 of them WITHOUT A SINGLE MESSAGE BEING
+//  SENT. So: never poll a tab nobody is looking at, and stretch the interval
+//  while nothing is arriving.
+// ════════════════════════════════════════════
+const MSG_POLL_BASE = 60000;    // 1 min when there's activity
+const MSG_POLL_MAX  = 300000;   // 5 min once things go quiet
+let msgPollDelay = MSG_POLL_BASE, msgPollHandle = null, msgLastSeenCount = -1;
+
+function msgSchedulePoll(delay) {
+  clearTimeout(msgPollHandle);
+  msgPollHandle = setTimeout(msgPollTick, delay == null ? msgPollDelay : delay);
+}
+
+async function msgPollTick() {
+  if (!curUser) { msgSchedulePoll(MSG_POLL_BASE); return; }
+  // Backgrounded, minimised, or screen-locked: skip the request entirely.
+  // Re-check on a cheap timer that costs nothing until the tab comes back.
+  if (document.visibilityState !== 'visible') { msgSchedulePoll(MSG_POLL_BASE); return; }
+  if (msgOpen) { msgSchedulePoll(MSG_POLL_BASE); return; }   // panel has its own 15s timer
+
+  await msgLoad(true);
+
+  // Snap back to the fast cadence the moment anything arrives.
+  if (msgAll.length !== msgLastSeenCount) {
+    msgLastSeenCount = msgAll.length;
+    msgPollDelay = MSG_POLL_BASE;
+  } else {
+    msgPollDelay = Math.min(Math.round(msgPollDelay * 1.5), MSG_POLL_MAX);
+  }
+  msgSchedulePoll();
+}
+
+// Coming back to the tab is the strongest signal there is that someone cares.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && curUser) {
+    msgPollDelay = MSG_POLL_BASE;
+    msgSchedulePoll(1500);
+  }
+});
 
 // ── Live clock for tech view datetime header ──
 setInterval(() => {
