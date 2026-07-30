@@ -364,11 +364,11 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 @media(max-width:520px){.msgpanel{width:100vw}.msgfab{right:14px;bottom:14px}}
 
 /* ── PER-TECH INLINE CHAT WINDOW (admin board columns) ── */
-.tchatbtn{position:relative;flex-shrink:0;width:22px;height:22px;display:flex;align-items:center;
-  justify-content:center;border-radius:7px;border:1px solid var(--bd);background:var(--bg);
+.tchatbtn{position:relative;flex-shrink:0;width:27px;height:27px;display:flex;align-items:center;
+  justify-content:center;border-radius:8px;border:1px solid var(--bd);background:var(--bg);
   color:var(--dm2);cursor:pointer;padding:0;transition:all .15s}
 .tchatbtn:hover{color:#fff;border-color:currentColor}
-.tchatbtn svg{width:13px;height:13px}
+.tchatbtn svg{width:16px;height:16px}
 .tchatdot{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;padding:0 4px;
   border-radius:8px;background:#ef4444;color:#fff;font-family:Inter,sans-serif;font-size:9px;
   font-weight:800;line-height:15px;text-align:center;border:1.5px solid var(--sf2)}
@@ -405,11 +405,11 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .tchatsend{color:#04101f}
 
 /* ── RESHUFFLE (nearest-first) BUTTON IN TECH HEADER ── */
-.rsbtn{flex-shrink:0;width:22px;height:22px;display:flex;align-items:center;justify-content:center;
-  border-radius:7px;border:1px solid var(--bd);background:var(--bg);color:var(--dm2);
+.rsbtn{flex-shrink:0;width:27px;height:27px;display:flex;align-items:center;justify-content:center;
+  border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--dm2);
   cursor:pointer;padding:0;transition:all .15s}
 .rsbtn:hover{color:#fff;border-color:currentColor}
-.rsbtn svg{width:13px;height:13px}
+.rsbtn svg{width:16px;height:16px}
 .rsbtn.busy{opacity:.5;pointer-events:none}
 .rsbtn.busy svg{animation:rsspin .8s linear infinite}
 @keyframes rsspin{to{transform:rotate(360deg)}}
@@ -1868,7 +1868,7 @@ function rBoard() {
         onclick="event.stopPropagation();reshuffleTech('${tech}')"
         title="Reorder ${tech}'s tickets: closest to their start location first">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
-      </button>`:'<span style="width:22px"></span>'}
+      </button>`:'<span style="width:27px"></span>'}
       ${msgIsAdmin()?`<button type="button" class="tchatbtn" id="tcb_${tech}" style="color:${tc}"
         onclick="event.stopPropagation();toggleTechChat('${tech}')" title="Messages with ${tech}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>
