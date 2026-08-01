@@ -1870,7 +1870,7 @@ function rBoard() {
   captureChatDrafts();
   const fj = getFiltered();
   let h = '';
-  const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : TECHS;
+  const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : ACTIVE_TECHS;
   visibleTechs.forEach(tech => {
     const tj = fj.filter(j => j.tech===tech);
     if (search && !tj.length) return;
@@ -2821,7 +2821,7 @@ function maybeShowTeamUp() {
   // Field staff only. Dispatch (Jon-Pol, John, Dan, Iris) already has the whole
   // board in front of them with the co-tech badges on every card, so a popup
   // would just be something to dismiss every morning.
-  const myTech = curUser.tech && TECHS.includes(curUser.tech) ? curUser.tech : null;
+  const myTech = curUser.tech && ACTIVE_TECHS.includes(curUser.tech) ? curUser.tech : null;
   if (!myTech) return;
 
   // Admins don't get notified either — this covers Louis, who has a tech column
@@ -4425,7 +4425,7 @@ async function retagJob(j, newColor) {
 // Writes the destination cell before clearing the source so a mid-flight
 // failure can't lose the ticket entirely.
 async function moveJobToTech(j, newTech, forceColor) {
-  if (!canWrite || !j || !TECHS.includes(newTech)) return;
+  if (!canWrite || !j || !ACTIVE_TECHS.includes(newTech)) return;   // never drop onto a retired tech
   if (j.tech === newTech && !forceColor) return;
 
   const oldRow = j.row, oldCol = j.col;
@@ -4588,7 +4588,7 @@ function bindDrag() {
 
       const newTech=tj.dataset.tech;
       if(!newTech) return;
-      if(!TECHS.includes(newTech)) return;
+      if(!ACTIVE_TECHS.includes(newTech)) return;   // never drop onto a retired tech
       // Coming out of a special column onto a tech column: move AND turn green
       // so it lands back on the active board rather than staying parked.
       if (ds.dataset.spcard) { await moveJobToTech(sJob, newTech, 'green'); return; }
@@ -5000,6 +5000,7 @@ function getCoTechs(job) {
     if (o.tech === job.tech) return;            // same person
     if (!COTECH_ACTIVE.includes(o.color)) return;      // only today's work
     if (o.tech === 'QUE' || o.col === QUE_COL) return; // QUE isn't a person
+    if (RETIRED_TECHS.has(o.tech)) return;      // left the company — don't badge as a co-tech
     if (SHOP.has(o.job)) return;                // shop check-ins aren't a shared site
     const oA = norm(o.address), oN = norm(o.job);
     const addrMatch = myA && oA && myA === oA;
