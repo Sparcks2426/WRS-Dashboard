@@ -223,6 +223,14 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .tv-addr{font-size:10px;color:var(--dm2);margin-top:4px;line-height:1.4;user-select:text;cursor:text}
 .tv-show-all{display:block;width:100%;padding:14px;background:var(--ac);border:none;border-radius:var(--r12);color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:1px;text-transform:uppercase;margin-bottom:20px;transition:background .15s}
 .tv-show-all:hover{background:var(--ac2)}
+/* Message Office — sits directly under Full Ticket Schedule in the tech view */
+.tv-msg-office{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;
+  background:linear-gradient(135deg,#3b82f6,#1d4ed8);border:none;border-radius:var(--r12);color:#fff;
+  font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:1px;
+  text-transform:uppercase;margin-top:-10px;margin-bottom:20px;transition:filter .15s}
+.tv-msg-office:hover{filter:brightness(1.12)}
+.tv-msg-badge{display:none;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#ef4444;
+  color:#fff;font-size:11px;font-weight:800;line-height:20px;text-align:center;letter-spacing:0}
 
 /* ── MISC ── */
 .toast{position:fixed;bottom:24px;left:50%;transform:translate(-50%,100px);z-index:10000;background:var(--sf2);border:1px solid var(--ac);color:#fff;padding:10px 20px;border-radius:var(--r8);font-size:11px;font-weight:700;opacity:0;transition:all .3s;pointer-events:none;letter-spacing:.5px}
@@ -564,6 +572,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   <!-- Tech View -->
   <div id="techView">
     <button class="tv-show-all" id="tvShowAll" onclick="showAdminView()">📋 Full Ticket Schedule</button>
+    <button class="tv-msg-office" id="tvMsgOffice" onclick="openMessages()">
+      💬 Message Office<span class="tv-msg-badge" id="tvMsgBadge">0</span>
+    </button>
     <div class="mapsec" id="mapsecTech" style="display:none">
       <div class="maphdr">
         <div class="maphdr-left">
@@ -928,7 +939,6 @@ const USERS = [
   { name:'Louis',             pin:'7912', role:'admin', tech:'Louis'    },
   { name:'Maikol',            pin:'1520', role:'read', tech:'Maikol'    },
   { name:'Jesse',             pin:'1488', role:'read', tech:'Jesse'     },
-  { name:'Landon',            pin:'2535', role:'read', tech:'Landon'    },
   { name:'Robert',            pin:'6473', role:'read', tech:'Robert'    },
 
 ];
@@ -945,6 +955,18 @@ const TC = {
 };
 // Derived — QUE lives in the last tech column; non-tech heartbeats go one column past it.
 const QUE_COL = TECHS.indexOf('QUE') + 1;   // 12 (column L)
+
+// Techs who have left. Their slot MUST stay in TECHS above, because
+// TECHS.indexOf(tech)+1 IS the spreadsheet column and the sheet range is a
+// fixed A6:L23 — splicing a name out would shift every tech after it and make
+// reads/writes land in the wrong column. So we keep the slot and hide the
+// person instead. To reclaim the column for good, blank it in the sheet,
+// remove the name from TECHS in BOTH index.html and worker.js, and narrow the
+// A6:L23 ranges — all together, not piecemeal.
+const RETIRED_TECHS = new Set(['Landon']);
+
+// Use this everywhere the UI lists techs; use TECHS only for column math.
+const ACTIVE_TECHS = TECHS.filter(t => !RETIRED_TECHS.has(t));
 const JOB_ROW_START = 6, JOB_ROW_END = 18;  // rows 6–18
 const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23
 
@@ -1365,7 +1387,7 @@ function mapReady() { return leafletLoaded && typeof L !== 'undefined'; }
 function startDash(user) {
   curUser = user;
   canWrite = user.role === 'admin' || user.role === 'write';
-  isTech   = user.role === 'read' && !!user.tech && TECHS.includes(user.tech);
+  isTech   = user.role === 'read' && !!user.tech && ACTIVE_TECHS.includes(user.tech);
   viewingAll = false;
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('dashWrap').style.display = 'block';
@@ -1733,7 +1755,7 @@ function saveDrafts() {
 // into ticketDrafts + localStorage. Call this right before board innerHTML
 // gets replaced so we don't lose in-flight typing.
 function captureTicketDrafts() {
-  TECHS.forEach(tech => {
+  ACTIVE_TECHS.forEach(tech => {
     const n = document.getElementById('ai_'+tech);
     const a = document.getElementById('ai_addr_'+tech);
     if (!n && !a) return;
@@ -2235,7 +2257,6 @@ function msgIsMobile() { return window.matchMedia('(max-width:820px)').matches; 
 
 let msgAll        = [];      // every message this user can see
 let msgOpen       = false;
-let msgToSel      = 'all';   // tech view: 'all' | admin name
 let msgBackend    = null;    // null = untested, true = live, false = not deployed
 let msgPollTimer  = null;
 const MSG_SEEN_KEY = 'wrs_msg_seen_v1';
@@ -2354,7 +2375,7 @@ function techChatHTML(tech, tc) {
 // Update just the unread pips on the column chat buttons. Cheaper than a
 // board rebuild, and it won't yank focus out of a reply someone is typing.
 function refreshChatBadges() {
-  TECHS.forEach(t => {
+  ACTIVE_TECHS.forEach(t => {
     const btn = document.getElementById('tcb_' + t);
     if (!btn) return;
     const n = techUnread(t);
@@ -2441,7 +2462,7 @@ async function sendTechReply(tech) {
 function msgAutoOpenNew() {
   if (!msgIsAdmin()) return false;
   let changed = false;
-  TECHS.forEach(t => {
+  ACTIVE_TECHS.forEach(t => {
     if (techUnread(t) > 0 && !msgChatOpen.has(t)) { msgChatOpen.add(t); changed = true; }
   });
   return changed;
@@ -2467,7 +2488,8 @@ function msgRefreshBadge() {
   const n = msgUnreadCount();
   const fab = document.getElementById('msgFabBadge');
   const btn = document.getElementById('msgBtnBadge');
-  [fab, btn].forEach(el => {
+  const tvb = document.getElementById('tvMsgBadge');   // Message Office button
+  [fab, btn, tvb].forEach(el => {
     if (!el) return;
     el.textContent = n > 99 ? '99+' : n;
     el.style.display = n ? (el === fab ? 'flex' : 'inline-block') : 'none';
@@ -2526,8 +2548,6 @@ function closeMessages() {
   msgRefreshBadge();
 }
 
-function msgSetTo(v) { msgToSel = v; msgRender(); }
-
 function msgRender() {
   const listEl    = document.getElementById('msgList');
   const toEl      = document.getElementById('msgTo');
@@ -2552,14 +2572,12 @@ function msgRender() {
   compEl.style.display = 'flex';
   titleEl.textContent = 'Message Dispatch';
 
+  // No recipient picker: a tech's message always reaches BOTH admins, so
+  // nothing can be sent to one and missed by the other.
   toEl.style.display = 'flex';
-  const admins = msgAdmins();
-  toEl.innerHTML =
-    `<button class="${msgToSel==='all'?'on':''}" onclick="msgSetTo('all')">Both</button>` +
-    admins.map(a => {
-      const short = a.split(' ')[0];
-      return `<button class="${msgToSel===a?'on':''}" onclick="msgSetTo('${a.replace(/'/g,"\\'")}')">${short}</button>`;
-    }).join('');
+  toEl.innerHTML = `<div style="flex:1;text-align:center;font-size:11px;font-weight:700;
+    color:var(--dm2);letter-spacing:.3px;padding:2px 0">
+    Goes to ${msgAdmins().map(a => a.split(' ')[0]).join(' &amp; ')}</div>`;
 
   const conv = msgVisible();
   if (!conv.length) {
@@ -2614,7 +2632,7 @@ async function sendMessage() {
 
   // The slide-over panel is the TECH side only; admins reply from the
   // per-column windows via sendTechReply().
-  const to = msgToSel;   // 'all' or a specific admin name
+  const to = 'all';      // always every admin — the picker was removed
   const optimistic = {
     id: 'tmp_' + Date.now(),
     from: curUser.name,
@@ -4623,7 +4641,7 @@ function initMap() {
 async function geocodeTechHomes() {
   if (homesGeocoded) return;
   if (!canWrite) return;
-  for (const tech of TECHS) {
+  for (const tech of ACTIVE_TECHS) {
     const h = TECH_START_LOCATIONS[tech];
     if (!h || !h.address) continue;
     if (h.lat && h.lng) continue;
@@ -4649,7 +4667,7 @@ function renderHomeDots() {
   // Hard role gate — admin + write only.
   if (!canWrite) return;
   if (mapTech !== 'all') return; // only show on ALL view
-  for (const tech of TECHS) {
+  for (const tech of ACTIVE_TECHS) {
     const h = TECH_START_LOCATIONS[tech];
     if (!h?.lat || !h?.lng) continue;
     const tc = TC[tech] || '#888';
@@ -4719,7 +4737,7 @@ function updateMap() {
 
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
 
-  const activeTechs=TECHS.filter(t=>tj.some(j=>j.tech===t));
+  const activeTechs=ACTIVE_TECHS.filter(t=>tj.some(j=>j.tech===t));
   let pillH=`<button class="mfp" style="${mapTech==='all'?'background:var(--gr);color:#000':'background:var(--sf);color:var(--dm2);border:1px solid var(--bd2)'}" onclick="setMapTech('all')">ALL (${tj.length})</button>`;
   activeTechs.forEach(t=>{
     const n=tj.filter(j=>j.tech===t).length, tc=TC[t]||'#888', a=mapTech===t;
