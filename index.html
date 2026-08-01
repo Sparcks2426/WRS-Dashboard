@@ -223,7 +223,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .tv-addr{font-size:10px;color:var(--dm2);margin-top:4px;line-height:1.4;user-select:text;cursor:text}
 .tv-show-all{display:block;width:100%;padding:14px;background:var(--ac);border:none;border-radius:var(--r12);color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:1px;text-transform:uppercase;margin-bottom:20px;transition:background .15s}
 .tv-show-all:hover{background:var(--ac2)}
-/* Message Office — sits directly under Full Ticket Schedule in the tech view */
+/* Message Dispatch — sits directly under Full Ticket Schedule in the tech view */
 .tv-msg-office{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;
   background:linear-gradient(135deg,#3b82f6,#1d4ed8);border:none;border-radius:var(--r12);color:#fff;
   font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:1px;
@@ -573,7 +573,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   <div id="techView">
     <button class="tv-show-all" id="tvShowAll" onclick="showAdminView()">📋 Full Ticket Schedule</button>
     <button class="tv-msg-office" id="tvMsgOffice" onclick="openMessages()">
-      💬 Message Office<span class="tv-msg-badge" id="tvMsgBadge">0</span>
+      💬 Message Dispatch<span class="tv-msg-badge" id="tvMsgBadge">0</span>
     </button>
     <div class="mapsec" id="mapsecTech" style="display:none">
       <div class="maphdr">
@@ -2488,7 +2488,7 @@ function msgRefreshBadge() {
   const n = msgUnreadCount();
   const fab = document.getElementById('msgFabBadge');
   const btn = document.getElementById('msgBtnBadge');
-  const tvb = document.getElementById('tvMsgBadge');   // Message Office button
+  const tvb = document.getElementById('tvMsgBadge');   // Message Dispatch button
   [fab, btn, tvb].forEach(el => {
     if (!el) return;
     el.textContent = n > 99 ? '99+' : n;
