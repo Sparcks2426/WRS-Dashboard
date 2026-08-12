@@ -1058,14 +1058,31 @@ const LOC = {
 let authToken = null;      // Worker session token (replaces gAccessToken)
 
 // ── apiCall: all backend communication goes through here ──
-async function apiCall(endpoint, body) {
+async function apiCall(endpoint, body, attempt = 0) {
   const headers = { 'Content-Type': 'application/json' };
   if (authToken) headers.Authorization = 'Bearer ' + authToken;
-  const res = await fetch(CONFIG.API_BASE + endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body || {}),
-  });
+  let res;
+  try {
+    res = await fetch(CONFIG.API_BASE + endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body || {}),
+    });
+  } catch (netErr) {
+    // Dropped wifi / worker cold-start reset. Retry twice before giving up.
+    if (attempt < 2) {
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      return apiCall(endpoint, body, attempt + 1);
+    }
+    throw new Error(`Network error reaching ${endpoint} — check your connection`);
+  }
+  // Sheets allows ~60 writes/user/minute. A burst (add + color, or several
+  // tickets in a row) trips 429 and the write is simply lost unless we retry.
+  // 5xx here is almost always a transient Sheets/Worker blip, not a real error.
+  if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+    await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
+    return apiCall(endpoint, body, attempt + 1);
+  }
   if (res.status === 401) {
     // Session expired — force re-login
     authToken = null;
@@ -1644,7 +1661,44 @@ function parseJob(raw) {
 // round-trip on every address and go straight to Nominatim.
 let googleGeoDead = false;
 
+// Addresses come off the service-management app as ZIP+4 ("FL 33467-3708") and
+// often carry a suite/unit. Nominatim returns nothing for either, which is why
+// a handful of perfectly valid tickets never got pins. Try the address as
+// given, then progressively simpler forms.
+const geoFailures = new Set();
+
+function addressVariants(addr) {
+  const out = [];
+  const push = s => { s = (s||'').replace(/\s{2,}/g,' ').replace(/\s*,\s*/g,', ').trim().replace(/,+$/,''); if (s && !out.includes(s)) out.push(s); };
+  push(addr);
+  // ZIP+4 → plain 5-digit ZIP
+  push(addr.replace(/\b(\d{5})-\d{4}\b/g, '$1'));
+  // Drop suite / unit / building / floor fragments
+  const noUnit = addr.replace(/[,\s]+(ste|suite|unit|apt|apartment|bldg|building|fl|floor|#)\s*[\w-]+/ig, '');
+  push(noUnit.replace(/\b(\d{5})-\d{4}\b/g, '$1'));
+  // Street + city + state, no ZIP at all
+  push(addr.replace(/\b\d{5}(-\d{4})?\b/g, ''));
+  return out;
+}
+
 async function geocodeOne(addr, retries=3) {
+  if (!addr) return null;
+  if (geoCache[addr]) return geoCache[addr];
+  // Try simplified forms before giving up; cache the hit under the ORIGINAL
+  // address so the next load is instant.
+  const variants = addressVariants(addr);
+  for (let vi = 1; vi < variants.length; vi++) {
+    if (geoCache[variants[vi]]) { geoCache[addr] = geoCache[variants[vi]]; persistGeoCache(); return geoCache[addr]; }
+  }
+  for (let vi = 0; vi < variants.length; vi++) {
+    const hit = await geocodeRaw(variants[vi], vi === 0 ? retries : 1);
+    if (hit) { geoCache[addr] = hit; persistGeoCache(); return hit; }
+  }
+  return null;
+}
+
+// The original single-form lookup, now callable per variant.
+async function geocodeRaw(addr, retries=3) {
   if (!addr) return null;
   if (geoCache[addr]) return geoCache[addr];
 
@@ -1708,8 +1762,20 @@ async function geocodeGreenJobs() {
       geoCache[loc.address] = { lat: loc.lat, lng: loc.lng };
     }
   }
+  // Shop tickets are excluded from the network loop below because their coords
+  // are hardcoded — but nothing was ever copying those coords onto the job, so
+  // a shop visit sat at lat=null and got filtered straight off the map. Assign
+  // them here.
+  const SHOP_NAMES = new Set(Object.keys(SHOP_LOCATIONS));
+  for (const j of jobs) {
+    if (j.color === 'green' && !j.lat && SHOP_NAMES.has(j.job)) {
+      const loc = SHOP_LOCATIONS[j.job];
+      if (loc?.lat && loc?.lng) { j.lat = loc.lat; j.lng = loc.lng; }
+    }
+  }
   // Geocode regular green jobs that still lack coords
-  const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !Object.keys(SHOP_LOCATIONS).includes(j.job));
+  const toGeo = jobs.filter(j => j.color==='green' && j.address && !j.lat && !SHOP_NAMES.has(j.job));
+  geoFailures.clear();
   let anyNew = false;
   let done = 0;
   geoProgress = { done: 0, total: toGeo.length };
@@ -1719,7 +1785,8 @@ async function geocodeGreenJobs() {
     try {
       const c = await geocodeOne(j.address);
       if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
-    } catch(e) { console.warn('Geocode failed for', j.address, e?.message || e); }
+      else geoFailures.add(j.address);
+    } catch(e) { geoFailures.add(j.address); console.warn('Geocode failed for', j.address, e?.message || e); }
     done++;
     geoProgress.done = done;
     // Draw as we go instead of making the dispatcher stare at a blank panel
@@ -2055,10 +2122,35 @@ function addJFull(tech) {
   const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
   render(); updateMap();
+  writeTicketCell(targetRow, col, v);
+}
+
+// ── writeTicketCell: value first, THEN colour ──
+// These used to go out together in a Promise.all. Two concurrent writes to the
+// same cell is how you get the half-saved ticket: the text lands, the green
+// background doesn't, the toast says "Save failed", and the ticket comes back
+// on the next sync as status 'none' — which the map filters out. That is the
+// "map is one short" symptom. Sequencing them removes the race, and each step
+// now reports what actually broke instead of a blanket "Save failed".
+function writeTicketCell(targetRow, col, v) {
   isSaving = true;
-  Promise.all([sheetsSetValue(targetRow, col, v), sheetsSetBackground(targetRow, col, '#00ff00')])
+  sheetsSetValue(targetRow, col, v)
+    .then(() =>
+      sheetsSetBackground(targetRow, col, '#00ff00')
+        .catch(err => {
+          // Text is on the sheet; only the status colour failed. Say so —
+          // otherwise the dispatcher retypes a ticket that already saved.
+          console.error('Background write failed:', err);
+          toast('Ticket saved, but status colour did not set — set it green manually');
+          throw { handled: true };
+        })
+    )
     .then(() => geocodeGreenJobs().then(()=>updateMap()))
-    .catch(()=>toast('Save failed'))
+    .catch(err => {
+      if (err && err.handled) return;
+      console.error('Ticket save failed:', err);
+      toast('Save failed — ' + (err?.message || 'unknown error'));
+    })
     .finally(() => { isSaving = false; loadData(); });
 }
 
@@ -2079,17 +2171,9 @@ function addJ(tech) {
   // Pause auto-refresh while the write is in flight; otherwise the 60s
   // loadData() can fire before the sheet has the new value, rebuild jobs[]
   // from the stale sheet, and silently wipe the ticket the user just typed.
-  isSaving = true;
-  Promise.all([sheetsSetValue(targetRow, col, v), sheetsSetBackground(targetRow, col, '#00ff00')])
-    .then(() => geocodeGreenJobs().then(()=>updateMap()))
-    .catch(()=>toast('Save failed'))
-    .finally(() => {
-      isSaving = false;
-      // Confirm-refresh: re-read the sheet right after the write so what's
-      // on screen is what's actually saved. If the write silently failed,
-      // the phantom ticket disappears now instead of 60s later.
-      loadData();
-    });
+  // Confirm-refresh happens inside writeTicketCell: it re-reads the sheet right
+  // after the write so what's on screen is what's actually saved.
+  writeTicketCell(targetRow, col, v);
 }
 
 function delJob(row, col, id) {
@@ -2116,10 +2200,12 @@ async function swapRows(row1, col, row2) {
   const cell2 = d2.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0];
   const v1 = cell1?.userEnteredValue?.stringValue||'', v2 = cell2?.userEnteredValue?.stringValue||'';
   const b1 = rgbToHex(cell1?.userEnteredFormat?.backgroundColor||{}), b2 = rgbToHex(cell2?.userEnteredFormat?.backgroundColor||{});
-  await Promise.all([
-    sheetsSetValue(row1,col,v2), sheetsSetBackground(row1,col,b2),
-    sheetsSetValue(row2,col,v1), sheetsSetBackground(row2,col,b1),
-  ]);
+  // Serial, not Promise.all: value and background hit the same cell, and firing
+  // them together is what produced half-applied swaps (text moved, colour didn't).
+  await sheetsSetValue(row1,col,v2);
+  await sheetsSetBackground(row1,col,b2);
+  await sheetsSetValue(row2,col,v1);
+  await sheetsSetBackground(row2,col,b1);
 }
 
 // ════════════════════════════════════════════
@@ -2154,12 +2240,13 @@ async function applyRowOrder(col, orderedJobs, targetRows) {
       bg: rgbToHex(c?.userEnteredFormat?.backgroundColor || {}),
     };
   });
-  const writes = [];
+  // One cell at a time. A 13-ticket column fired 26 simultaneous writes, which
+  // is a reliable way to trip the Sheets per-minute write quota and lose the
+  // colour half of some rows.
   for (let i = 0; i < targetRows.length; i++) {
-    writes.push(sheetsSetValue(targetRows[i], col, cells[i].v));
-    writes.push(sheetsSetBackground(targetRows[i], col, cells[i].bg));
+    await sheetsSetValue(targetRows[i], col, cells[i].v);
+    await sheetsSetBackground(targetRows[i], col, cells[i].bg);
   }
-  await Promise.all(writes);
 }
 
 async function reshuffleTech(tech) {
@@ -4738,7 +4825,9 @@ function updateMap() {
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
 
   const activeTechs=ACTIVE_TECHS.filter(t=>tj.some(j=>j.tech===t));
-  let pillH=`<button class="mfp" style="${mapTech==='all'?'background:var(--gr);color:#000':'background:var(--sf);color:var(--dm2);border:1px solid var(--bd2)'}" onclick="setMapTech('all')">ALL (${tj.length})</button>`;
+  const totalGreen=jobs.filter(j=>j.color==='green'&&j.address).length;
+  const allLabel=totalGreen>tj.length?`ALL (${tj.length} of ${totalGreen})`:`ALL (${tj.length})`;
+  let pillH=`<button class="mfp" style="${mapTech==='all'?'background:var(--gr);color:#000':'background:var(--sf);color:var(--dm2);border:1px solid var(--bd2)'}" onclick="setMapTech('all')">${allLabel}</button>`;
   activeTechs.forEach(t=>{
     const n=tj.filter(j=>j.tech===t).length, tc=TC[t]||'#888', a=mapTech===t;
     pillH+=`<button class="mfp" style="${a?'background:'+tc+';color:#000':'background:var(--sf);color:'+tc+';border:1px solid '+tc+'30'}" onclick="setMapTech('${t}')">${t} (${n})</button>`;
@@ -4797,8 +4886,20 @@ function renderMapList(vj, legs, totalMin, totalMi) {
       <span class="rstat" style="color:var(--dm2)">${vj.length} stops</span>
     </div>`;
   } else se.innerHTML='';
+  // Green tickets that exist on the board but have no coordinates were being
+  // dropped from the map with no trace — that's the "map is one short" gap.
+  // List them so a bad address gets noticed and fixed.
+  const unlocated = jobs.filter(j =>
+    j.color === 'green' && j.address && !(j.lat && j.lng) &&
+    (mapTech === 'all' || j.tech === mapTech));
+  const unlocatedHTML = unlocated.length
+    ? `<div style="margin:6px 0 8px;padding:8px 10px;border-left:3px solid var(--yl);background:#2a220a;border-radius:4px;font-size:11px;color:var(--yl);font-weight:600">
+        ${unlocated.length} ticket${unlocated.length===1?'':'s'} not on the map — address wouldn't locate:
+        ${unlocated.map(j=>`<div style="color:var(--dm2);font-weight:500;margin-top:3px">${j.tech}: ${j.job} — ${j.address}</div>`).join('')}
+      </div>`
+    : '';
   const tCtr={};
-  document.getElementById('jobList').innerHTML = vj.map((j,i)=>{
+  document.getElementById('jobList').innerHTML = unlocatedHTML + vj.map((j,i)=>{
     tCtr[j.tech]=(tCtr[j.tech]||0)+1;
     const tc=TC[j.tech]||'#888', dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
     const leg=legs?.[i];
