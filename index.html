@@ -288,11 +288,23 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .spcol .thdr{border-radius:var(--r12) var(--r12) 0 0}
 /* Split special column: two stacked halves sharing one column slot (JP Review / Installs) */
 .spcol.split{padding:0}
-.spcol.split .sphalf{display:flex;flex-direction:column;flex:1 1 0;min-height:0}
+.spcol.split .sphalf{display:flex;flex-direction:column;flex:0 0 auto;min-height:0}
 .spcol.split .sphalf+.sphalf{border-top:2px solid var(--bd)}
 .spcol.split .sphalf .thdr{border-radius:0}
 .spcol.split .sphalf:first-child .thdr{border-radius:var(--r12) var(--r12) 0 0}
-.spcol.split .tjobs{overflow-y:auto;max-height:340px}
+/* Halves grow/shrink with their ticket count instead of splitting the column
+   50/50. The cap only kicks in on a very long list so the page can't run away. */
+.spcol.split .tjobs{overflow-y:auto;max-height:min(70vh,900px)}
+.spcol.split .sphalf .tjobs{flex:0 0 auto}
+
+/* Date chip on special-column cards — when the ticket landed in that column. */
+.spdate{display:inline-block;vertical-align:1px;margin-left:6px;padding:1px 6px;border-radius:999px;
+  border:1px solid var(--bd2);background:rgba(255,255,255,.05);color:var(--dm2);
+  font-family:'Inter',sans-serif;font-size:9px;font-weight:800;letter-spacing:.6px;
+  white-space:nowrap;cursor:pointer;transition:background .12s,color .12s,border-color .12s}
+.spdate:hover{background:rgba(255,255,255,.12);color:var(--tx);border-color:var(--dm)}
+.spdate.stale{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
+.spdate.none{color:var(--dm);border-style:dashed}
 
 /* Note button on lower/special column cards — the status dot, made clickable.
    Mirrors the numbered badge on tech tickets (same orange .jnumdot indicator). */
@@ -1590,8 +1602,17 @@ async function loadData() {
         }
         // Strip legacy SHOPNOTE: prefix that survived migration from row 26
         if (jobNote.startsWith('SHOPNOTE:')) jobNote = jobNote.slice('SHOPNOTE:'.length).trim();
+        // Same convention for the special-column date stamp: " ||DATE:YYYY-MM-DD".
+        // Written before the note so free-text notes can never swallow it.
+        let jobDate = '';
+        const dateIdx = cellVal.indexOf(' ||DATE:');
+        if (dateIdx !== -1) {
+          jobDate = cellVal.slice(dateIdx + 8).trim().slice(0, 10);
+          cellVal = cellVal.slice(0, dateIdx).trim();
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(jobDate)) jobDate = '';
         const parsed = parseJob(cellVal);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote };
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote, tagged: jobDate };
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
           job.lat = geoCache[parsed.addr].lat;
           job.lng = geoCache[parsed.addr].lng;
@@ -1634,6 +1655,59 @@ async function loadData() {
     console.error(e);
     toast('Sync failed — ' + e.message);
   }
+}
+
+// ════════════════════════════════════════════
+//  SPECIAL-COLUMN DATE STAMPS
+//  Statuses that live in the lower columns. A ticket entering one of these
+//  gets stamped with today's date; going back to the board clears it.
+// ════════════════════════════════════════════
+const SPECIAL_KEYS = ['pink', 'inst', 'john', 'orange', 'yellow'];
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Days since an ISO date (local midnight to local midnight).
+function daysSince(iso) {
+  if (!iso) return null;
+  const [y,m,d] = iso.split('-').map(Number);
+  const then = new Date(y, m-1, d).getTime();
+  const now  = new Date(); now.setHours(0,0,0,0);
+  return Math.max(0, Math.round((now.getTime() - then) / 86400000));
+}
+
+function fmtSpDate(iso) {
+  if (!iso) return '';
+  const [y,m,d] = iso.split('-').map(Number);
+  const dt = new Date(y, m-1, d);
+  const base = dt.toLocaleDateString('en-US', { month:'short', day:'numeric' }).toUpperCase();
+  return dt.getFullYear() === new Date().getFullYear() ? base : `${base} '${String(y).slice(2)}`;
+}
+
+// Single source of truth for what goes in the sheet cell:
+//   "<name>, <address> ||DATE:YYYY-MM-DD ||NOTE:<text>"
+// DATE comes first because notes are free text and run to the end of the value.
+function jobCellValue(j, overrides) {
+  const o = overrides || {};
+  const name = 'job'     in o ? o.job     : j.job;
+  const addr = 'address' in o ? o.address : j.address;
+  const date = 'tagged'  in o ? o.tagged  : j.tagged;
+  const note = 'notes'   in o ? o.notes   : j.notes;
+  let v = addr ? `${name}, ${addr}` : name;
+  if (date) v += ` ||DATE:${date}`;
+  if (note) v += ` ||NOTE:${note}`;
+  return v;
+}
+
+// What the date should become for a given status: stamped today on the way
+// into a lower column, cleared on the way back out to the board.
+function dateForStatus(j, status) {
+  if (!SPECIAL_KEYS.includes(status)) return '';
+  // Already sitting in a lower column and staying put → keep the original date.
+  if (j.tagged && j.color === status) return j.tagged;
+  return todayISO();
 }
 
 function parseJob(raw) {
@@ -2012,6 +2086,14 @@ function rSpecialCols() {
       j.tech.toLowerCase().includes(s) ||
       (j.address||'').toLowerCase().includes(s)
     );
+    // Newest first. Tickets with no stamp yet fall to the bottom of the list.
+    sj.sort((a, b) => {
+      const da = a.tagged || '', db = b.tagged || '';
+      if (da && db) return db.localeCompare(da);
+      if (da) return -1;
+      if (db) return 1;
+      return a.job.localeCompare(b.job);
+    });
     return sj;
   };
 
@@ -2033,7 +2115,7 @@ function rSpecialCols() {
           ? `<button type="button" class="spnotebtn" style="background:${sc.color}" title="${hasNote?'Edit note':'Add note'}" onclick="event.stopPropagation();openJobNote(${j.id})">${hasNote?'<span class="jnumdot"></span>':''}</button>`
           : `<span class="jsd" style="background:${sc.color}"></span>`}
         <div class="jinfo">
-          <span class="jn">${j.job}</span>
+          <span class="jn">${j.job}</span>${spDateChip(j)}
           ${coTechBadges(j, true)}
           ${hasNote?`<span class="jnotes">${String(j.notes).replace(/</g,'&lt;')}</span>`:''}
           <span class="ja" style="color:${tc}">${j.tech}${j.address?' — '+j.address:''}</span>
@@ -2057,6 +2139,67 @@ function rSpecialCols() {
     }
   });
   document.getElementById('spcols').innerHTML = h;
+}
+
+// The visible date on a lower-column card. Older than a week goes amber;
+// an unstamped ticket (moved before this feature, or dropped in by hand on
+// the sheet) shows a dashed "SET DATE" you can click to stamp.
+function spDateChip(j) {
+  const age = daysSince(j.tagged);
+  if (!j.tagged) {
+    return canWrite
+      ? `<button type="button" class="spdate none" title="No date yet — click to set" onclick="event.stopPropagation();editSpDate(event,${j.id})">SET DATE</button>`
+      : `<span class="spdate none">—</span>`;
+  }
+  const cls   = age >= 7 ? 'spdate stale' : 'spdate';
+  const title = `In this column since ${fmtSpDate(j.tagged)} · ${age === 0 ? 'today' : age + ' day' + (age===1?'':'s')}${canWrite ? ' · click to change' : ''}`;
+  return canWrite
+    ? `<button type="button" class="${cls}" title="${title}" onclick="event.stopPropagation();editSpDate(event,${j.id})">${fmtSpDate(j.tagged)}</button>`
+    : `<span class="${cls}" title="${title}">${fmtSpDate(j.tagged)}</span>`;
+}
+
+// Click a chip to correct the date. Opens the native date picker positioned
+// over the chip (an off-screen input won't open a picker in most browsers).
+function editSpDate(e, id) {
+  if (!canWrite) return;
+  e.stopPropagation();
+  const j = jobs.find(x => x.id === id); if (!j) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  const inp = document.createElement('input');
+  inp.type = 'date';
+  inp.value = j.tagged || todayISO();
+  inp.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${Math.max(r.width,20)}px;height:${r.height}px;opacity:0;z-index:99999;border:none;padding:0`;
+  document.body.appendChild(inp);
+  let done = false;
+  const finish = save => {
+    if (done) return; done = true;
+    const v = inp.value;
+    inp.remove();
+    if (!save || !v || v === j.tagged) return;
+    setSpDate(j, v);
+  };
+  inp.addEventListener('change', () => finish(true));
+  inp.addEventListener('blur',   () => setTimeout(() => finish(false), 150));
+  inp.focus();
+  if (inp.showPicker) { try { inp.showPicker(); } catch(err) { inp.click(); } }
+  else inp.click();
+}
+
+// Persist a manual date edit to the sheet.
+async function setSpDate(j, iso) {
+  const prev = j.tagged || '';
+  j.tagged = iso;
+  render();
+  isSaving = true;
+  try {
+    await sheetsSetValue(j.row, j.col, jobCellValue(j));
+  } catch (err) {
+    j.tagged = prev; render();
+    toast('Couldn\u2019t save the date');
+    console.error('setSpDate failed:', err);
+  } finally {
+    isSaving = false;
+  }
 }
 
 function jobCard(j, editable, stopNum, techColor) {
@@ -3032,8 +3175,7 @@ function closeJobNote() {
 function _writeJobNote(j, noteText) {
   // Reconstruct the cell value: "<job name>, <address>" + optional " ||NOTE:<text>".
   // If parseJob returned no addr, fall back to just the job name.
-  const base = j.address ? `${j.job}, ${j.address}` : j.job;
-  const cellVal = noteText ? `${base} ||NOTE:${noteText}` : base;
+  const cellVal = jobCellValue(j, { notes: noteText });
   isSaving = true;
   return sheetsSetValue(j.row, j.col, cellVal)
     .catch(() => toast('Save note failed'))
@@ -3067,8 +3209,16 @@ function clearJobNote() {
 
 function chgColor(id, nc) {
   const j = jobs.find(x=>x.id===id); if(!j) return;
-  closeDD(); j.color=nc;
+  closeDD();
+  const prevDate = j.tagged || '';
+  const newDate  = dateForStatus(j, nc);
+  j.color=nc;
+  j.tagged=newDate;
   render(); updateMap();
+  // Date stamp rides in the cell value, so that's a separate write.
+  if (newDate !== prevDate) {
+    sheetsSetValue(j.row, j.col, jobCellValue(j)).catch(()=>toast('Save date failed'));
+  }
   // Guard auto-refresh while the background-color write is pending,
   // otherwise loadData() can race ahead, read the old cell color, and
   // snap the ticket back to its previous status (most painful for John
@@ -3096,12 +3246,11 @@ async function moveToQue(id) {
   if (targetRow === null) { toast('QUE column is full (max 13)'); return; }
 
   // Build the cell value: name, address, optional ||NOTE:
-  const base = j.address ? `${j.job}, ${j.address}` : j.job;
-  const cellVal = j.notes ? `${base} ||NOTE:${j.notes}` : base;
+  const cellVal = jobCellValue(j, { tagged: '' });
   const srcRow = j.row, srcCol = j.col;
 
   // Optimistic: move in memory + render immediately for snappy UX
-  j.row = targetRow; j.col = QUE_COL; j.tech = 'QUE'; j.color = 'green';
+  j.row = targetRow; j.col = QUE_COL; j.tech = 'QUE'; j.color = 'green'; j.tagged = '';
   render(); updateMap();
 
   isSaving = true;
@@ -4491,15 +4640,20 @@ async function promoteInstall(date, slot) {
 // ════════════════════════════════════════════
 async function retagJob(j, newColor) {
   if (!canWrite || !j || j.color === newColor) return;
-  const prev = j.color;
+  const prev = j.color, prevDate = j.tagged || '';
+  // Landing in a lower column stamps today; leaving for the board clears it.
+  const newDate = dateForStatus(j, newColor);
   j.color = newColor;
+  j.tagged = newDate;
   render(); updateMap();
   isSaving = true;
   try {
+    if (newDate !== prevDate) await sheetsSetValue(j.row, j.col, jobCellValue(j));
     await sheetsSetBackground(j.row, j.col, STATUS_TO_HEX[newColor] || '#ffffff');
     toast(`✓ ${j.job} → ${SL[newColor] || newColor}`);
   } catch (err) {
     j.color = prev;            // roll the optimistic change back
+    j.tagged = prevDate;
     render(); updateMap();
     toast('Move failed — try again');
     console.error('retagJob failed:', err);
@@ -4522,9 +4676,9 @@ async function moveJobToTech(j, newTech, forceColor) {
   for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) { if (!occupied.has(r)) { newRow = r; break; } }
   if (!newRow) { toast(`${newTech} column is full`); return; }
 
-  const base = j.job + (j.address ? ' - ' + j.address : '');
-  const val  = j.notes ? `${base} ||NOTE:${j.notes}` : base;
   const color = forceColor || j.color;
+  const newDate = SPECIAL_KEYS.includes(color) ? (j.tagged || todayISO()) : '';
+  const val  = jobCellValue(j, { tagged: newDate });
   const hex   = STATUS_TO_HEX[color] || '#ffffff';
 
   isSaving = true;
@@ -4533,7 +4687,7 @@ async function moveJobToTech(j, newTech, forceColor) {
     await sheetsSetValue(newRow, newCol, val);
     await sheetsSetBackground(newRow, newCol, hex);
     if (!(oldRow === newRow && oldCol === newCol)) await sheetsClear(oldRow, oldCol);
-    j.tech = newTech; j.col = newCol; j.row = newRow; j.color = color;
+    j.tech = newTech; j.col = newCol; j.row = newRow; j.color = color; j.tagged = newDate;
     jobs.sort((a, b) => (a.row - b.row) || (a.col - b.col));
     render(); updateMap();
     toast(`✓ Moved to ${newTech}`);
@@ -4614,6 +4768,7 @@ function bindDrag() {
         [sJob.lat,tJob.lat]=[tJob.lat,sJob.lat];
         [sJob.lng,tJob.lng]=[tJob.lng,sJob.lng];
         [sJob.notes,tJob.notes]=[tJob.notes,sJob.notes];
+        [sJob.tagged,tJob.tagged]=[tJob.tagged,sJob.tagged];
         render(); updateMap();
         // Guard auto-refresh until the swap fully persists to the sheet,
         // otherwise loadData can race ahead, read pre-swap values, and
@@ -4637,8 +4792,7 @@ function bindDrag() {
         let newRow = null;
         for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
         if (!newRow) { toast(`${newTech} column is full`); return; }
-        const srcBase = sJob.job + (sJob.address ? ' - ' + sJob.address : '');
-        const srcVal  = sJob.notes ? `${srcBase} ||NOTE:${sJob.notes}` : srcBase;
+        const srcVal  = jobCellValue(sJob);
         const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
         // Pause auto-refresh, write sheet first, then update UI
         isSaving = true;
