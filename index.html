@@ -969,40 +969,17 @@ const QUE_COL = TECHS.indexOf('QUE') + 1;   // 12 (column L)
 
 // Techs who have left. Their slot MUST stay in TECHS above, because
 // TECHS.indexOf(tech)+1 IS the spreadsheet column and the sheet range is a
-// fixed A6:L<SHEET_LAST_ROW> — splicing a name out would shift every tech after it and make
+// fixed A6:L23 — splicing a name out would shift every tech after it and make
 // reads/writes land in the wrong column. So we keep the slot and hide the
 // person instead. To reclaim the column for good, blank it in the sheet,
 // remove the name from TECHS in BOTH index.html and worker.js, and narrow the
-// column ranges — all together, not piecemeal.
+// A6:L23 ranges — all together, not piecemeal.
 const RETIRED_TECHS = new Set(['Landon']);
 
 // Use this everywhere the UI lists techs; use TECHS only for column math.
 const ACTIVE_TECHS = TECHS.filter(t => !RETIRED_TECHS.has(t));
-// ── Sheet row layout ──
-// Tickets used to stop at row 18, which is where the hard "13 tickets per
-// column" cap came from. Rows 19–23 are vendor notes and can't be touched, so
-// the ticket block now continues BELOW them: rows 6–18, then 24–SHEET_LAST_ROW.
-// Use nextFreeRow()/isJobRow() rather than looping the range by hand, so the
-// vendor-note band always gets skipped.
-const JOB_ROW_START = 6, JOB_ROW_END = 205;   // rows 6–205, minus the note band
-const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23 (vendor notes)
-const SHEET_LAST_ROW = JOB_ROW_END;           // how far loadData reads
-
-// True if a sheet row is usable for a ticket (i.e. not in the vendor-note band).
-function isJobRow(r) {
-  return r >= JOB_ROW_START && r <= JOB_ROW_END && !(r >= NOTE_ROW_START && r <= NOTE_ROW_END);
-}
-
-// First ticket row in a column that isn't already taken. `occupied` may be a
-// Set or an Array of row numbers. Returns null only if the column is
-// genuinely full, which now means ~195 tickets rather than 13.
-function nextFreeRow(occupied) {
-  const has = occupied instanceof Set ? r => occupied.has(r) : r => occupied.includes(r);
-  for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) {
-    if (isJobRow(r) && !has(r)) return r;
-  }
-  return null;
-}
+const JOB_ROW_START = 6, JOB_ROW_END = 18;  // rows 6–18
+const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23
 
 // ── Status maps ──
 const SL  = { green:"Today's Tickets", orange:"Follow Up", yellow:"Estimates", blue:"Parts Needed", inst:"Installs", pink:"JP Review", john:"Louis", close:"Close Out", none:"Untagged", que:"➜ Move to QUE" };
@@ -1242,80 +1219,7 @@ let shopModalTech = null, shopModalSelected = null;
 // ════════════════════════════════════════════
 //  STARTUP
 // ════════════════════════════════════════════
-// ══════════════════════════════════════════
-//  BUILD GATE — a new upload signs everyone out
-// ══════════════════════════════════════════
-// The running build is identified two ways, and EITHER changing forces a fresh
-// PIN sign-in on every device:
-//   1. APP_BUILD — a string you can bump by hand for a deliberate mass sign-out.
-//   2. The deployed file's own ETag / Last-Modified, read with a HEAD request.
-//      GitHub Pages changes this on every push, so a plain re-upload signs
-//      everyone out with nothing to remember.
-// The two are combined into one stamp kept in localStorage. Only the saved
-// session is cleared — ticket drafts, the geocode cache and read-message state
-// all survive the sign-out.
-const APP_BUILD    = '2026-08-16';
-const BUILD_LS_KEY = 'wrs_build';
-
-let _buildStamp = null;          // stamp for the code currently running
-
-function clearSessionForUpdate() {
-  authToken = null;
-  try {
-    localStorage.removeItem('wrs_user');
-    localStorage.removeItem('wrs_token');
-  } catch(e) {}
-}
-
-// ETag (or Last-Modified) of the page itself. Empty string if the host won't
-// answer a HEAD, the page was opened from disk, or anything else goes wrong —
-// in which case the gate quietly falls back to APP_BUILD alone.
-async function fetchBuildFingerprint() {
-  try {
-    const res = await fetch(location.pathname, { method: 'HEAD', cache: 'no-store' });
-    return res.headers.get('etag') || res.headers.get('last-modified') || '';
-  } catch(e) { return ''; }
-}
-
-// Runs before auto-login. Returns true if a saved session was just invalidated.
-async function initBuildGate() {
-  let stored = '';
-  try { stored = localStorage.getItem(BUILD_LS_KEY) || ''; } catch(e) {}
-  const stamp = APP_BUILD + '|' + (await fetchBuildFingerprint());
-  _buildStamp = stamp;
-  const changed = !!stored && stored !== stamp;
-  try { localStorage.setItem(BUILD_LS_KEY, stamp); } catch(e) {}
-  if (changed) clearSessionForUpdate();
-  return changed;
-}
-
-// A new build lands while someone is mid-session. Don't yank the page out from
-// under them — tell them, and let them reload when they're ready. The stored
-// stamp is deliberately NOT updated here, so however they reload (button or
-// F5) the gate above still sees the change and makes them sign in.
-function showUpdateBanner() {
-  const b = document.getElementById('relogBanner');
-  if (!b || b.dataset.update === '1') return;
-  b.dataset.update = '1';
-  const msg = document.getElementById('relogBannerMsg');
-  if (msg) msg.textContent = 'A new version of the dashboard was uploaded — reload to update (you will need to sign in again).';
-  const btn = document.getElementById('relogBtn');
-  if (btn) {
-    btn.textContent = 'RELOAD NOW';
-    btn.onclick = () => { clearSessionForUpdate(); location.reload(); };
-  }
-  b.style.display = 'block';
-  document.body.style.paddingTop = b.offsetHeight + 'px';
-}
-
-// Poll for a newer upload while the dashboard is open.
-async function checkForNewBuild() {
-  const fp = await fetchBuildFingerprint();
-  if (!fp || !_buildStamp) return;
-  if (APP_BUILD + '|' + fp !== _buildStamp) showUpdateBanner();
-}
-
-(async function init() {
+(function init() {
   // Populate login name select
   const sel = document.getElementById('loginName');
   USERS.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(u => {
@@ -1332,17 +1236,6 @@ async function checkForNewBuild() {
   }
   updateAdminMapTag();
   setInterval(updateAdminMapTag, 1000);
-
-  // A new build was uploaded since this device last loaded the page. The saved
-  // session is already cleared, so fall through to the PIN screen with a note.
-  if (await initBuildGate()) {
-    const err = document.getElementById('loginErr');
-    if (err) {
-      err.style.color = '#93c5fd';
-      err.textContent = 'Dashboard updated — please sign in again.';
-    }
-    return;
-  }
 
   // Auto-login: validate saved token with Worker; restore session if still valid
   try {
@@ -1519,20 +1412,9 @@ function loadLeaflet(cb) {
 // so `L` may legitimately not exist.
 function mapReady() { return leafletLoaded && typeof L !== 'undefined'; }
 
-let _buildPollStarted = false;
-
 function startDash(user) {
   curUser = user;
   canWrite = user.role === 'admin' || user.role === 'write';
-  // Watch for a newer upload while they're working: every 5 minutes, and again
-  // whenever the tab is brought back to the foreground.
-  if (!_buildPollStarted) {
-    _buildPollStarted = true;
-    setInterval(checkForNewBuild, 5 * 60 * 1000);
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) checkForNewBuild();
-    });
-  }
   isTech   = user.role === 'read' && !!user.tech && ACTIVE_TECHS.includes(user.tech);
   viewingAll = false;
   document.getElementById('loginScreen').style.display = 'none';
@@ -1690,17 +1572,15 @@ async function loadData() {
   setSyncState('syncing');
   try {
     // ── Fetch jobs + vendor notes (rows 6-23) ──
-    // sheetData index 0 = row 6 (12 tech columns incl. QUE). The range runs to
-    // SHEET_LAST_ROW so columns can hold far more than the old 13 tickets.
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:L${SHEET_LAST_ROW}`);
+    // Range A6:L23 → sheetData index 0 = row 6 (12 tech columns incl. QUE)
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:L23`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
     jobs = [];
 
-    // ── Read job tickets: every row in the block except the vendor-note band ──
+    // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
     let id = 1;
-    for (let r = 0; r <= JOB_ROW_END - 6; r++) {   // sheetData[r] → sheet row r+6
-      if (!isJobRow(r + 6)) continue;              // skip rows 19–23
+    for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < TECHS.length; c++) {   // 12 tech columns A-L (incl. QUE)
         const cell = rowData[c];
@@ -1742,7 +1622,7 @@ async function loadData() {
 
     // ── Vendor notes (rows 19-23, sheetData index 13-17) ──
     vendorNotes = [];
-    for (let r = NOTE_ROW_START - 6; r <= NOTE_ROW_END - 6; r++) {
+    for (let r = 13; r < 18; r++) {
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < TECHS.length; c++) {
         const cell = rowData[c];
@@ -2380,8 +2260,9 @@ function addJFull(tech) {
   clearTicketDraft(tech);
   const parsed = parseJob(v);
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
-  const targetRow = nextFreeRow(occupied);
-  if (!targetRow) { toast(`${tech}'s column is full`); return; }
+  let targetRow = null;
+  for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
+  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
   const col = TECHS.indexOf(tech)+1;
   const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
@@ -2425,8 +2306,9 @@ function addJ(tech) {
   const parsed = parseJob(v);
   // Find first empty row
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
-  const targetRow = nextFreeRow(occupied);
-  if (!targetRow) { toast(`${tech}'s column is full`); return; }
+  let targetRow = null;
+  for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
+  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
   const col = TECHS.indexOf(tech)+1;
   const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
@@ -2503,7 +2385,7 @@ async function applyRowOrder(col, orderedJobs, targetRows) {
       bg: rgbToHex(c?.userEnteredFormat?.backgroundColor || {}),
     };
   });
-  // One cell at a time. A 13-ticket column already fired 26 simultaneous writes, which
+  // One cell at a time. A 13-ticket column fired 26 simultaneous writes, which
   // is a reliable way to trip the Sheets per-minute write quota and lose the
   // colour half of some rows.
   for (let i = 0; i < targetRows.length; i++) {
@@ -3357,10 +3239,13 @@ async function moveToQue(id) {
   closeDD();
   if (j.col === QUE_COL) { toast('Already in QUE'); return; }
 
-  // Next empty row in the QUE column
+  // Find next empty row in QUE column (rows 6-18)
   const queJobs = jobs.filter(x => x.col === QUE_COL).map(x => x.row);
-  const targetRow = nextFreeRow(queJobs);
-  if (targetRow === null) { toast('QUE column is full'); return; }
+  let targetRow = null;
+  for (let r = 6; r <= 18; r++) {
+    if (!queJobs.includes(r)) { targetRow = r; break; }
+  }
+  if (targetRow === null) { toast('QUE column is full (max 13)'); return; }
 
   // Build the cell value: name, address, optional ||NOTE:
   const cellVal = jobCellValue(j, { tagged: '' });
@@ -4789,7 +4674,8 @@ async function moveJobToTech(j, newTech, forceColor) {
   const oldRow = j.row, oldCol = j.col;
   const newCol = TECHS.indexOf(newTech) + 1;
   const occupied = new Set(jobs.filter(x => x.tech === newTech && x.id !== j.id).map(x => x.row));
-  const newRow = nextFreeRow(occupied);
+  let newRow = null;
+  for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) { if (!occupied.has(r)) { newRow = r; break; } }
   if (!newRow) { toast(`${newTech} column is full`); return; }
 
   const color = forceColor || j.color;
@@ -4905,7 +4791,8 @@ function bindDrag() {
         const newTech = tJob.tech;
         const newCol = TECHS.indexOf(newTech) + 1;
         const occupied = new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
-        const newRow = nextFreeRow(occupied);
+        let newRow = null;
+        for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
         if (!newRow) { toast(`${newTech} column is full`); return; }
         const srcVal  = jobCellValue(sJob);
         const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
@@ -4952,9 +4839,10 @@ function bindDrag() {
       const oldRow=sJob.row, oldCol=sJob.col;
       const newCol=TECHS.indexOf(newTech)+1;
       const occupied=new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
-      const newRow = nextFreeRow(occupied);
+      let newRow=null;
+      for(let r=JOB_ROW_START;r<=JOB_ROW_END;r++){if(!occupied.has(r)){newRow=r;break;}}
       if(!newRow){toast(`${newTech} column is full`);return;}
-      const srcVal = jobCellValue(sJob);
+      const srcVal=sJob.job+(sJob.address?' - '+sJob.address:'');
       const srcHex=STATUS_TO_HEX[sJob.color]||'#ffffff';
       isSaving = true;
       toast(`Moving to ${newTech}...`);
