@@ -969,17 +969,18 @@ const QUE_COL = TECHS.indexOf('QUE') + 1;   // 12 (column L)
 
 // Techs who have left. Their slot MUST stay in TECHS above, because
 // TECHS.indexOf(tech)+1 IS the spreadsheet column and the sheet range is a
-// fixed A6:L23 — splicing a name out would shift every tech after it and make
+// fixed A6:L30 — splicing a name out would shift every tech after it and make
 // reads/writes land in the wrong column. So we keep the slot and hide the
 // person instead. To reclaim the column for good, blank it in the sheet,
 // remove the name from TECHS in BOTH index.html and worker.js, and narrow the
-// A6:L23 ranges — all together, not piecemeal.
+// A6:L30 ranges — all together, not piecemeal.
 const RETIRED_TECHS = new Set(['Landon']);
 
 // Use this everywhere the UI lists techs; use TECHS only for column math.
 const ACTIVE_TECHS = TECHS.filter(t => !RETIRED_TECHS.has(t));
-const JOB_ROW_START = 6, JOB_ROW_END = 18;  // rows 6–18
-const NOTE_ROW_START = 19, NOTE_ROW_END = 23; // rows 19–23
+const JOB_ROW_START = 6, JOB_ROW_END = 25;  // rows 6–25 (20 tickets per column)
+const MAX_TICKETS = JOB_ROW_END - JOB_ROW_START + 1;
+const NOTE_ROW_START = 26, NOTE_ROW_END = 30; // rows 26–30
 
 // ── Status maps ──
 const SL  = { green:"Today's Tickets", orange:"Follow Up", yellow:"Estimates", blue:"Parts Needed", inst:"Installs", pink:"JP Review", john:"Louis", close:"Close Out", none:"Untagged", que:"➜ Move to QUE" };
@@ -1170,7 +1171,8 @@ let isSaving = false; // blocks auto-refresh during sheet writes
 
 // ── Session heartbeat ──
 const SESSION_ID = Math.random().toString(36).slice(2,10); // unique per tab/load
-const HEARTBEAT_ROW = 27;   // row 27: one column per tech (A-L, incl. QUE), col M for non-tech users
+const HEARTBEAT_ROW = 33;   // row 33: one column per tech (A-L, incl. QUE), col M for non-tech users
+                            // (was row 27 — moved down when the ticket block grew to rows 6–25)
 const HEARTBEAT_COL_NONTECHS = QUE_COL + 1; // column M (1-based) for non-tech users packed as JSON in one cell
 let SESSION_INFO = null; // populated async on login with device + geo info
 
@@ -1571,16 +1573,16 @@ function setSyncState(state) {
 async function loadData() {
   setSyncState('syncing');
   try {
-    // ── Fetch jobs + vendor notes (rows 6-23) ──
-    // Range A6:L23 → sheetData index 0 = row 6 (12 tech columns incl. QUE)
-    const fmtResp = await sheetsGetFormatting(`Sheet1!A6:L23`);
+    // ── Fetch jobs + vendor notes (rows 6-30) ──
+    // Range A6:L30 → sheetData index 0 = row 6 (12 tech columns incl. QUE)
+    const fmtResp = await sheetsGetFormatting(`Sheet1!A${JOB_ROW_START}:L${NOTE_ROW_END}`);
     const sheetData = fmtResp.sheets?.[0]?.data?.[0]?.rowData || [];
 
     jobs = [];
 
-    // ── Read job tickets (rows 6-18, sheetData index 0-12) ──
+    // ── Read job tickets (rows 6-25, sheetData index 0-19) ──
     let id = 1;
-    for (let r = 0; r < 13; r++) {  // rows 6-18 → sheetData[0..12]
+    for (let r = 0; r < MAX_TICKETS; r++) {  // rows 6-25 → sheetData[0..19]
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < TECHS.length; c++) {   // 12 tech columns A-L (incl. QUE)
         const cell = rowData[c];
@@ -1611,7 +1613,7 @@ async function loadData() {
         }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(jobDate)) jobDate = '';
         const parsed = parseJob(cellVal);
-        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+6, col: c+1, lat: null, lng: null, notes: jobNote, tagged: jobDate };
+        const job = { id: id++, tech: TECHS[c] || 'Unknown', job: parsed.name, address: parsed.addr, color: status, row: r+JOB_ROW_START, col: c+1, lat: null, lng: null, notes: jobNote, tagged: jobDate };
         if (status === 'green' && parsed.addr && geoCache[parsed.addr]) {
           job.lat = geoCache[parsed.addr].lat;
           job.lng = geoCache[parsed.addr].lng;
@@ -1620,14 +1622,14 @@ async function loadData() {
       }
     }
 
-    // ── Vendor notes (rows 19-23, sheetData index 13-17) ──
+    // ── Vendor notes (rows 26-30) ──
     vendorNotes = [];
-    for (let r = 13; r < 18; r++) {
+    for (let r = NOTE_ROW_START - JOB_ROW_START; r <= NOTE_ROW_END - JOB_ROW_START; r++) {
       const rowData = sheetData[r]?.values || [];
       for (let c = 0; c < TECHS.length; c++) {
         const cell = rowData[c];
         const val = cell?.userEnteredValue?.stringValue || '';
-        if (val && val.trim()) vendorNotes.push({ row: r+6, col: c+1, tech: TECHS[c]||'', text: val.trim() });
+        if (val && val.trim()) vendorNotes.push({ row: r+JOB_ROW_START, col: c+1, tech: TECHS[c]||'', text: val.trim() });
       }
     }
 
@@ -2262,7 +2264,7 @@ function addJFull(tech) {
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
   let targetRow = null;
   for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
-  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
+  if (!targetRow) { toast(`Column full (max ${MAX_TICKETS} tickets)`); return; }
   const col = TECHS.indexOf(tech)+1;
   const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
@@ -2308,7 +2310,7 @@ function addJ(tech) {
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
   let targetRow = null;
   for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
-  if (!targetRow) { toast('Column full (max 13 tickets)'); return; }
+  if (!targetRow) { toast(`Column full (max ${MAX_TICKETS} tickets)`); return; }
   const col = TECHS.indexOf(tech)+1;
   const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
   jobs.push(newJob);
@@ -3239,13 +3241,13 @@ async function moveToQue(id) {
   closeDD();
   if (j.col === QUE_COL) { toast('Already in QUE'); return; }
 
-  // Find next empty row in QUE column (rows 6-18)
+  // Find next empty row in QUE column (rows 6-25)
   const queJobs = jobs.filter(x => x.col === QUE_COL).map(x => x.row);
   let targetRow = null;
-  for (let r = 6; r <= 18; r++) {
+  for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) {
     if (!queJobs.includes(r)) { targetRow = r; break; }
   }
-  if (targetRow === null) { toast('QUE column is full (max 13)'); return; }
+  if (targetRow === null) { toast(`QUE column is full (max ${MAX_TICKETS})`); return; }
 
   // Build the cell value: name, address, optional ||NOTE:
   const cellVal = jobCellValue(j, { tagged: '' });
