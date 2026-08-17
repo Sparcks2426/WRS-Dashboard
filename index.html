@@ -302,9 +302,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   border:1px solid var(--bd2);background:rgba(255,255,255,.05);color:var(--dm2);
   font-family:'Inter',sans-serif;font-size:9px;font-weight:800;letter-spacing:.6px;
   white-space:nowrap;cursor:pointer;transition:background .12s,color .12s,border-color .12s}
-.spdate:hover{background:rgba(255,255,255,.12);color:var(--tx);border-color:var(--dm)}
-.spdate.stale{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
-.spdate.none{color:var(--dm);border-style:dashed}
+.spdate:hover{filter:brightness(1.35)}
+.spdate.none{border-style:dashed;opacity:.75}
 
 /* Note button on lower/special column cards — the status dot, made clickable.
    Mirrors the numbered badge on tech tickets (same orange .jnumdot indicator). */
@@ -2146,16 +2145,19 @@ function rSpecialCols() {
 // the sheet) shows a dashed "SET DATE" you can click to stamp.
 function spDateChip(j) {
   const age = daysSince(j.tagged);
+  // Chip takes the colour of the tech who owns the ticket, so the date reads
+  // as "whose ticket, and when" at a glance.
+  const tc  = TC[j.tech] || '#888';
+  const sty = `color:${tc};border-color:${tc}66;background:${tc}1f`;
   if (!j.tagged) {
     return canWrite
-      ? `<button type="button" class="spdate none" title="No date yet — click to set" onclick="event.stopPropagation();editSpDate(event,${j.id})">SET DATE</button>`
-      : `<span class="spdate none">—</span>`;
+      ? `<button type="button" class="spdate none" style="${sty}" title="No date yet — click to set" onclick="event.stopPropagation();editSpDate(event,${j.id})">SET DATE</button>`
+      : `<span class="spdate none" style="${sty}">—</span>`;
   }
-  const cls   = age >= 7 ? 'spdate stale' : 'spdate';
   const title = `In this column since ${fmtSpDate(j.tagged)} · ${age === 0 ? 'today' : age + ' day' + (age===1?'':'s')}${canWrite ? ' · click to change' : ''}`;
   return canWrite
-    ? `<button type="button" class="${cls}" title="${title}" onclick="event.stopPropagation();editSpDate(event,${j.id})">${fmtSpDate(j.tagged)}</button>`
-    : `<span class="${cls}" title="${title}">${fmtSpDate(j.tagged)}</span>`;
+    ? `<button type="button" class="spdate" style="${sty}" title="${title}" onclick="event.stopPropagation();editSpDate(event,${j.id})">${fmtSpDate(j.tagged)}</button>`
+    : `<span class="spdate" style="${sty}" title="${title}">${fmtSpDate(j.tagged)}</span>`;
 }
 
 // Click a chip to correct the date. Opens the native date picker positioned
