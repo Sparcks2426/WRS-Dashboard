@@ -950,7 +950,6 @@ const USERS = [
   { name:'Louis',             pin:'7912', role:'admin', tech:'Louis'    },
   { name:'Maikol',            pin:'1520', role:'read', tech:'Maikol'    },
   { name:'Jesse',             pin:'1488', role:'read', tech:'Jesse'     },
-  { name:'Robert',            pin:'6473', role:'read', tech:'Robert'    },
 
 ];
 
@@ -974,7 +973,7 @@ const QUE_COL = TECHS.indexOf('QUE') + 1;   // 12 (column L)
 // person instead. To reclaim the column for good, blank it in the sheet,
 // remove the name from TECHS in BOTH index.html and worker.js, and narrow the
 // A6:L30 ranges — all together, not piecemeal.
-const RETIRED_TECHS = new Set(['Landon']);
+const RETIRED_TECHS = new Set(['Landon','Robert']);
 
 // Use this everywhere the UI lists techs; use TECHS only for column math.
 const ACTIVE_TECHS = TECHS.filter(t => !RETIRED_TECHS.has(t));
@@ -3335,11 +3334,6 @@ function renderNotes() {
       header: 'Whole Foods',
       color: '#06b6d4',
       body: `Check in and out of Corrigo Pro. If unable to login contact the office`
-    },
-    {
-      header: 'American Compactor Rentals',
-      color: '#ec4899',
-      body: `*NTE  $400.00*\n**Call if any parts needed**\n**1 Hour Labor Max**\n1- Tech to text Amanda 662-435-7611 or Wade 662-435-7261 to check in/out. Include site name.\n2- Prior Authorization of work to be performed if going over NTE.\nMust Send picture of Data Tag Showing Make/Model/Serial # of Unit\nMust take before and after pictures.`
     },
   ];
   document.getElementById('nsec').style.display='';
