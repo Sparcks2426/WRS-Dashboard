@@ -104,6 +104,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .mlleg{font-size:11px;color:var(--gr);padding:4px 0 4px 30px;font-weight:600;border-bottom:1px solid var(--bd)}
 .mapbox{flex:1;position:relative}
 #lmap{position:absolute;inset:0}
+/* OpenStreetMap tiles are light; this darkens them to sit with the dashboard (see addBaseTiles). */
+.darktiles{filter:brightness(.6) invert(1) contrast(3) hue-rotate(200deg) saturate(.3) brightness(.7)}
 
 /* ── BOARD ── */
 .mainarea{display:flex;gap:14px}
@@ -4896,11 +4898,23 @@ function bindDrag() {
 let homeLayer = null;
 let homesGeocoded = false;
 
+// Map background tiles, shared by the admin map and the tech's route map.
+// CARTO's dark tiles need an API key since Sept 2026 — without one every tile
+// comes back stamped "API KEY REQUIRED". OpenStreetMap's tiles need no key;
+// .darktiles darkens them to match. OSM's tile policy requires the credit
+// line to stay visible, so don't blank the attribution.
+function addBaseTiles(map) {
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, keepBuffer: 4, className: 'darktiles',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+  }).addTo(map);
+}
+
 function initMap() {
   if (lmap) return;
   if (!mapReady()) return;
   lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
+  addBaseTiles(lmap);
   markerLayer = L.layerGroup().addTo(lmap);
   routeLayer  = L.layerGroup().addTo(lmap);
   homeLayer   = L.layerGroup().addTo(lmap);
@@ -5185,9 +5199,7 @@ async function renderTechView(withMap=true) {
   // This avoids reloading all tiles on every refresh (major speed improvement)
   if (!lmapTech) {
     lmapTech = L.map('lmapTech',{zoomControl:true,preferCanvas:true}).setView([26.5,-80.2],10);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-      maxZoom:19, attribution:'', keepBuffer:4
-    }).addTo(lmapTech);
+    addBaseTiles(lmapTech);
     markerLayerTech = L.layerGroup().addTo(lmapTech);
     routeLayerTech  = L.layerGroup().addTo(lmapTech);
   } else {
