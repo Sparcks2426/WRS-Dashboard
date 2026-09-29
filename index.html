@@ -131,6 +131,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .jc:hover{filter:brightness(1.1)}
 .jc.dragging{opacity:.3;transform:scale(.96)}
 .jc.dragover{border-top:2px solid var(--ac);padding-top:11px}
+.jc.dragover.below{border-top:none;padding-top:9px;border-bottom:2px solid var(--ac);padding-bottom:11px}
 .jsd{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:5px}
 .jinfo{flex:1;min-width:0}
 .jn{font-size:13px;font-weight:700;color:var(--tx);word-break:break-word;line-height:1.3}
@@ -240,6 +241,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 @keyframes spin{to{transform:rotate(360deg)}}
 .jc.dragging{opacity:.3}
 .jc.dragover{border-top:2px solid var(--ac)!important}
+.jc.dragover.below{border-top:none!important;border-bottom:2px solid var(--ac)!important}
 .tjobs.dragover{outline:2px dashed var(--ac);outline-offset:-2px;border-radius:var(--r4)}
 
 /* ── VENDOR NOTES ── */
@@ -1516,7 +1518,7 @@ function backToTechView() {
 //  SHEETS API HELPERS (via Worker)
 // ════════════════════════════════════════════
 // These keep the same input/output shape as the old direct-Sheets-API
-// versions, so all the existing callers (loadData, swapRows, etc.) work
+// versions, so all the existing callers (loadData, applyRowOrder, etc.) work
 // unchanged. The Worker validates row bounds — writes outside the
 // dashboard area (rows 1-50) will be rejected.
 
@@ -1991,12 +1993,50 @@ function rLeg() {
 function resetFilters()       { activeFilters.clear(); statFilter=null; render(); }
 function toggleFilt(c)        { activeFilters.has(c)?activeFilters.delete(c):activeFilters.add(c); render(); }
 
+// Statuses that never render in a tech's board column: the lower columns
+// (JP Review, Installs, Louis, Follow Up, Estimates) plus Parts Needed and
+// Close Out. Those tickets still occupy a row in the tech's sheet column.
+const BOARD_HIDDEN = ['pink','john','orange','yellow','blue','close','inst'];
+
+// A tech's board tickets, top to bottom. The sheet row IS the running order:
+// the board, the tech's phone and the map all read it this way, so a
+// dispatcher's #3 is the tech's #3.
+function techBoardJobs(tech) {
+  return jobs.filter(j => j.tech === tech && !BOARD_HIDDEN.includes(j.color))
+             .sort((a, b) => a.row - b.row);
+}
+
+// Re-point an ordered list of one tech's board tickets onto the rows they
+// already hold between them, sorted — so tickets parked in the lower columns
+// never move. Updates j.row in memory and returns only the cells that change.
+function planColumnOrder(ordered) {
+  const target = ordered.map(j => j.row).sort((a, b) => a - b);
+  const moves = [];
+  ordered.forEach((j, i) => {
+    if (j.row !== target[i]) { moves.push({ from: j.row, to: target[i] }); j.row = target[i]; }
+  });
+  return moves;
+}
+
+// Where a new ticket goes so it lands at the BOTTOM of the tech's list:
+// the first free row below the current last board ticket. Only when there is
+// none (the column's tail is full of parked tickets) does it fall back to an
+// earlier gap — `shift` tells the caller to reorder it down to the end.
+function appendSlot(tech) {
+  const taken = new Set(jobs.filter(j => j.tech === tech).map(j => j.row));
+  const board = techBoardJobs(tech);
+  const last  = board.length ? board[board.length - 1].row : JOB_ROW_START - 1;
+  for (let r = last + 1; r <= JOB_ROW_END; r++) if (!taken.has(r)) return { row: r, shift: false };
+  for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) if (!taken.has(r)) return { row: r, shift: true };
+  return null;
+}
+
 function getFiltered() {
   // Main board only shows green (active work); installs live in their own half-column
   return jobs.filter(j => {
     // 'inst' now lives in the Installs half-column under JP Review, so it's
     // excluded here too — otherwise install tickets would render twice.
-    if (['pink','john','orange','yellow','blue','close','inst'].includes(j.color)) return false;
+    if (BOARD_HIDDEN.includes(j.color)) return false;
     if (search) { const s=search.toLowerCase(); if(!j.job.toLowerCase().includes(s)&&!j.tech.toLowerCase().includes(s)&&!j.address.toLowerCase().includes(s)) return false; }
     if (activeFilters.size && !activeFilters.has(j.color)) return false;
     if (statFilter && j.color!==statFilter) return false;
@@ -2013,9 +2053,15 @@ function rBoard() {
   let h = '';
   const visibleTechs = (isTech && !viewingAll && curUser?.tech) ? [curUser.tech] : ACTIVE_TECHS;
   visibleTechs.forEach(tech => {
-    const tj = fj.filter(j => j.tech===tech);
+    // Row order, explicitly — jobs[] is only row-sorted straight after a sync,
+    // so an optimistic add/move would otherwise render out of place.
+    const tj = fj.filter(j => j.tech===tech).sort((a, b) => a.row - b.row);
     if (search && !tj.length) return;
     const tc = TC[tech]||'#888';
+    // Stop numbers count green tickets only — exactly what the tech's phone
+    // and the map number — and ignore search, so a number never shifts.
+    const stopNo = {};
+    techBoardJobs(tech).filter(j => j.color === 'green').forEach((j, i) => { stopNo[j.id] = i + 1; });
 
 
     // Header: add row at TOP, then jobs
@@ -2048,7 +2094,7 @@ function rBoard() {
     ${techChatHTML(tech, tc)}
     <div class="tjobs" data-tech="${tech}">`;
     if (!tj.length) h += `<div style="text-align:center;padding:16px;color:var(--dm);font-size:12px">NO TICKETS</div>`;
-    else tj.forEach((j, idx) => { h += jobCard(j, canWrite, idx + 1, tc); });
+    else tj.forEach(j => { h += jobCard(j, canWrite, stopNo[j.id] || 0, tc); });
     h += `</div></div>`;
   });
   document.getElementById('board').innerHTML = h;
@@ -2259,16 +2305,27 @@ function addJFull(tech) {
   nameInp.value = '';
   addrInp.value = '';
   clearTicketDraft(tech);
+  placeNewTicket(tech, v);
+}
+
+// New tickets go to the BOTTOM of the tech's list. They used to take the first
+// empty row, which is often a gap mid-column left by a delete or a move — so
+// the ticket showed last on the board until the next sync, then jumped into
+// the middle, and the tech saw it mid-route.
+function placeNewTicket(tech, v) {
+  const slot = appendSlot(tech);
+  if (!slot) { toast(`Column full (max ${MAX_TICKETS} tickets)`); return; }
   const parsed = parseJob(v);
-  const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
-  let targetRow = null;
-  for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
-  if (!targetRow) { toast(`Column full (max ${MAX_TICKETS} tickets)`); return; }
   const col = TECHS.indexOf(tech)+1;
-  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
+  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:slot.row, col, lat:null, lng:null, notes:'', tagged:'' };
+  // No free row below the last ticket: write it into the earlier gap, then
+  // shift the tickets beneath it up one so it still ends up last.
+  const moves = slot.shift ? planColumnOrder([...techBoardJobs(tech), newJob]) : [];
   jobs.push(newJob);
   render(); updateMap();
-  writeTicketCell(targetRow, col, v);
+  writeTicketCell(slot.row, col, v, moves.length
+    ? () => applyRowOrder(col, moves.map(m => m.from), moves.map(m => m.to))
+    : null);
 }
 
 // ── writeTicketCell: value first, THEN colour ──
@@ -2278,7 +2335,9 @@ function addJFull(tech) {
 // on the next sync as status 'none' — which the map filters out. That is the
 // "map is one short" symptom. Sequencing them removes the race, and each step
 // now reports what actually broke instead of a blanket "Save failed".
-function writeTicketCell(targetRow, col, v) {
+// `afterSave` (optional) runs once the cell is fully written — used to shift
+// the new ticket to the bottom when it had to borrow an earlier gap.
+function writeTicketCell(targetRow, col, v, afterSave) {
   isSaving = true;
   sheetsSetValue(targetRow, col, v)
     .then(() =>
@@ -2291,6 +2350,11 @@ function writeTicketCell(targetRow, col, v) {
           throw { handled: true };
         })
     )
+    .then(() => afterSave && afterSave().catch(err => {
+      console.error('Reorder after add failed:', err);
+      toast('Ticket saved, but it could not be moved to the bottom of the list');
+      throw { handled: true };
+    }))
     .then(() => geocodeGreenJobs().then(()=>updateMap()))
     .catch(err => {
       if (err && err.handled) return;
@@ -2304,22 +2368,12 @@ function addJ(tech) {
   if (!canWrite) return;
   const inp = document.getElementById('ai_'+tech), v = inp?.value.trim();
   if (!v) return; inp.value=''; clearTicketDraft(tech);
-  const parsed = parseJob(v);
-  // Find first empty row
-  const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
-  let targetRow = null;
-  for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
-  if (!targetRow) { toast(`Column full (max ${MAX_TICKETS} tickets)`); return; }
-  const col = TECHS.indexOf(tech)+1;
-  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
-  jobs.push(newJob);
-  render(); updateMap();
   // Pause auto-refresh while the write is in flight; otherwise the 60s
   // loadData() can fire before the sheet has the new value, rebuild jobs[]
   // from the stale sheet, and silently wipe the ticket the user just typed.
   // Confirm-refresh happens inside writeTicketCell: it re-reads the sheet right
   // after the write so what's on screen is what's actually saved.
-  writeTicketCell(targetRow, col, v);
+  placeNewTicket(tech, v);
 }
 
 function delJob(row, col, id) {
@@ -2335,23 +2389,6 @@ function delJob(row, col, id) {
       isSaving = false;
       loadData(); // confirm the delete actually persisted
     });
-}
-
-async function swapRows(row1, col, row2) {
-  // Swap values + backgrounds for two cells in the same column
-  const range1 = `Sheet1!${colLetter(col)}${row1}`, range2 = `Sheet1!${colLetter(col)}${row2}`;
-  // Read both first
-  const [d1, d2] = await Promise.all([sheetsGetFormatting(range1), sheetsGetFormatting(range2)]);
-  const cell1 = d1.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0];
-  const cell2 = d2.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0];
-  const v1 = cell1?.userEnteredValue?.stringValue||'', v2 = cell2?.userEnteredValue?.stringValue||'';
-  const b1 = rgbToHex(cell1?.userEnteredFormat?.backgroundColor||{}), b2 = rgbToHex(cell2?.userEnteredFormat?.backgroundColor||{});
-  // Serial, not Promise.all: value and background hit the same cell, and firing
-  // them together is what produced half-applied swaps (text moved, colour didn't).
-  await sheetsSetValue(row1,col,v2);
-  await sheetsSetBackground(row1,col,b2);
-  await sheetsSetValue(row2,col,v1);
-  await sheetsSetBackground(row2,col,b1);
 }
 
 // ════════════════════════════════════════════
@@ -2370,14 +2407,14 @@ function milesBetween(aLat, aLng, bLat, bLng) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 
-// Rewrite a column so `orderedJobs` occupy `targetRows` in that order.
-// Reads the raw cell value + background for each job's current row first, then
-// writes them back into the target rows. Copying raw cells (rather than
-// rebuilding the text from parsed fields) means notes, job #, and any odd
-// formatting survive the shuffle untouched — same approach as swapRows().
-async function applyRowOrder(col, orderedJobs, targetRows) {
-  const reads = await Promise.all(orderedJobs.map(j =>
-    sheetsGetFormatting(`Sheet1!${colLetter(col)}${j.row}`)
+// Rewrite a column so the cell at fromRows[i] ends up at toRows[i].
+// Reads every source cell's raw value + background first, then writes them
+// into the target rows. Copying raw cells (rather than rebuilding the text
+// from parsed fields) means notes, job #, and any odd formatting survive the
+// move untouched. Callers pass only the cells that actually change.
+async function applyRowOrder(col, fromRows, toRows) {
+  const reads = await Promise.all(fromRows.map(r =>
+    sheetsGetFormatting(`Sheet1!${colLetter(col)}${r}`)
   ));
   const cells = reads.map(d => {
     const c = d.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0];
@@ -2389,9 +2426,9 @@ async function applyRowOrder(col, orderedJobs, targetRows) {
   // One cell at a time. A 13-ticket column fired 26 simultaneous writes, which
   // is a reliable way to trip the Sheets per-minute write quota and lose the
   // colour half of some rows.
-  for (let i = 0; i < targetRows.length; i++) {
-    await sheetsSetValue(targetRows[i], col, cells[i].v);
-    await sheetsSetBackground(targetRows[i], col, cells[i].bg);
+  for (let i = 0; i < toRows.length; i++) {
+    await sheetsSetValue(toRows[i], col, cells[i].v);
+    await sheetsSetBackground(toRows[i], col, cells[i].bg);
   }
 }
 
@@ -2401,8 +2438,7 @@ async function reshuffleTech(tech) {
 
   // Jobs currently shown in this tech's board column (ignores search/filter so
   // the shuffle always covers the whole column, not just what's visible).
-  const HIDDEN = ['pink','john','orange','yellow','blue','close','inst'];
-  const tj = jobs.filter(j => j.tech === tech && !HIDDEN.includes(j.color));
+  const tj = techBoardJobs(tech);
   if (tj.length < 2) { toast(tj.length ? 'Only one ticket — nothing to reorder' : 'No tickets to reorder'); return; }
 
   const start = TECH_START_LOCATIONS[tech];
@@ -2440,21 +2476,17 @@ async function reshuffleTech(tech) {
       .map(x => x.j);
 
     const unplaced = ordered.filter(j => !(j.lat && j.lng)).length;
-    const targetRows = tj.map(j => j.row).sort((a, b) => a - b);
 
     // No-op guard: already in nearest-first order.
-    if (ordered.every((j, i) => j.row === targetRows[i])) {
+    const moves = planColumnOrder(ordered);
+    if (!moves.length) {
       toast('Already sorted closest → furthest');
       return;
     }
 
     isSaving = true;
-    await applyRowOrder(TECHS.indexOf(tech) + 1, ordered, targetRows);
-    ordered.forEach((j, i) => { j.row = targetRows[i]; });
-    // rBoard() renders each tech's tickets in jobs[] array order, and loadData()
-    // builds that array row-major. Reassigning .row alone would leave the board
-    // looking unchanged until the next sync, so re-sort jobs[] the same way
-    // loadData() would — by (row, col) — to keep the optimistic render honest.
+    await applyRowOrder(TECHS.indexOf(tech) + 1, moves.map(m => m.from), moves.map(m => m.to));
+    // Keep jobs[] row-major, the way loadData() builds it.
     jobs.sort((a, b) => (a.row - b.row) || (a.col - b.col));
     render(); updateMap();
     toast(unplaced
@@ -4665,19 +4697,25 @@ async function retagJob(j, newColor) {
   }
 }
 
-// Move a ticket into another tech's column, optionally forcing a new status.
+// Move a ticket into another tech's column — or back onto its own tech's board
+// from a lower column — optionally forcing a new status. It lands where it was
+// dropped: in `atJob`'s slot when dropped onto a card, else at the bottom.
 // Writes the destination cell before clearing the source so a mid-flight
 // failure can't lose the ticket entirely.
-async function moveJobToTech(j, newTech, forceColor) {
+async function moveJobToTech(j, newTech, forceColor, atJob) {
   if (!canWrite || !j || !ACTIVE_TECHS.includes(newTech)) return;   // never drop onto a retired tech
   if (j.tech === newTech && !forceColor) return;
 
-  const oldRow = j.row, oldCol = j.col;
+  const oldTech = j.tech, oldRow = j.row, oldCol = j.col;
   const newCol = TECHS.indexOf(newTech) + 1;
-  const occupied = new Set(jobs.filter(x => x.tech === newTech && x.id !== j.id).map(x => x.row));
-  let newRow = null;
-  for (let r = JOB_ROW_START; r <= JOB_ROW_END; r++) { if (!occupied.has(r)) { newRow = r; break; } }
-  if (!newRow) { toast(`${newTech} column is full`); return; }
+  // Same tech (back from a lower column): it keeps its own row, gets
+  // recoloured, and is then reordered into place below.
+  let newRow = oldRow;
+  if (newTech !== oldTech) {
+    const slot = appendSlot(newTech);
+    if (!slot) { toast(`${newTech} column is full`); return; }
+    newRow = slot.row;
+  }
 
   const color = forceColor || j.color;
   const newDate = SPECIAL_KEYS.includes(color) ? (j.tagged || todayISO()) : '';
@@ -4689,14 +4727,55 @@ async function moveJobToTech(j, newTech, forceColor) {
   try {
     await sheetsSetValue(newRow, newCol, val);
     await sheetsSetBackground(newRow, newCol, hex);
-    if (!(oldRow === newRow && oldCol === newCol)) await sheetsClear(oldRow, oldCol);
+    if (newTech !== oldTech) await sheetsClear(oldRow, oldCol);
     j.tech = newTech; j.col = newCol; j.row = newRow; j.color = color; j.tagged = newDate;
+
+    // Slot it into position among the destination tech's board tickets.
+    let moves = [];
+    if (!BOARD_HIDDEN.includes(color)) {
+      const list = techBoardJobs(newTech).filter(x => x !== j);
+      const at = atJob ? list.indexOf(atJob) : -1;
+      list.splice(at < 0 ? list.length : at, 0, j);
+      moves = planColumnOrder(list);
+    }
     jobs.sort((a, b) => (a.row - b.row) || (a.col - b.col));
     render(); updateMap();
+    if (moves.length) await applyRowOrder(newCol, moves.map(m => m.from), moves.map(m => m.to));
     toast(`✓ Moved to ${newTech}`);
   } catch (err) {
     toast('Move failed — try again');
     console.error('moveJobToTech failed:', err);
+  } finally {
+    isSaving = false;
+    loadData();
+  }
+}
+
+// Reorder within one tech's column. The dragged ticket takes the target's
+// slot and the tickets in between shift by one — an insert, not a swap (the
+// old swap sent the target ticket all the way to where the dragged one came
+// from). With no target it goes to the bottom. Only board tickets move;
+// anything parked in the lower columns keeps its row.
+async function reorderInColumn(sJob, tJob) {
+  const list = techBoardJobs(sJob.tech);
+  const from = list.indexOf(sJob);
+  const to   = tJob ? list.indexOf(tJob) : list.length - 1;
+  if (from < 0 || to < 0 || from === to) return;
+  list.splice(from, 1);
+  list.splice(to, 0, sJob);
+  const moves = planColumnOrder(list);
+  if (!moves.length) return;
+  jobs.sort((a, b) => (a.row - b.row) || (a.col - b.col));
+  render(); updateMap();
+  // Guard auto-refresh until the rewrite fully persists, otherwise loadData
+  // can race ahead, read half-written cells, and revert the reorder. After
+  // the writes (success or failure), reconcile from the sheet.
+  isSaving = true;
+  try {
+    await applyRowOrder(sJob.col, moves.map(m => m.from), moves.map(m => m.to));
+  } catch (err) {
+    toast('Reorder failed — try again');
+    console.error('reorderInColumn failed:', err);
   } finally {
     isSaving = false;
     loadData();
@@ -4714,6 +4793,14 @@ let _dragArmed = null;
 function _disarmDrag() { if (_dragArmed) { _dragArmed.draggable = false; _dragArmed = null; } }
 document.addEventListener('mouseup',  _disarmDrag);
 document.addEventListener('touchend', _disarmDrag);
+
+// A reorder reads cells back from the sheet before rewriting them, so a second
+// drop while the first is still writing would copy half-moved cells.
+function dropBusy() {
+  if (!isSaving) return false;
+  toast('Still saving — try again in a moment');
+  return true;
+}
 
 function bindDrag() {
   let ds = null;
@@ -4734,21 +4821,28 @@ function bindDrag() {
     });
     el.addEventListener('dragend', function() {
       this.classList.remove('dragging'); ds=null; _disarmDrag();
-      document.querySelectorAll('.dragover').forEach(x=>x.classList.remove('dragover'));
+      document.querySelectorAll('.dragover').forEach(x=>x.classList.remove('dragover','below'));
     });
     el.addEventListener('dragover', function(e) {
-      e.preventDefault(); if(this!==ds&&this.classList.contains('jc')){
-        document.querySelectorAll('.dragover').forEach(x=>{if(x!==this)x.classList.remove('dragover')});
+      e.preventDefault(); if(ds&&this!==ds&&this.classList.contains('jc')){
+        document.querySelectorAll('.dragover').forEach(x=>{if(x!==this)x.classList.remove('dragover','below')});
         this.classList.add('dragover');
+        // Dragging DOWN its own tech column, the ticket lands below the target
+        // (it takes the target's number); everywhere else it lands above.
+        const below = !ds.dataset.spcard && !this.dataset.spcard &&
+          ds.dataset.col === this.dataset.col && +ds.dataset.row < +this.dataset.row;
+        this.classList.toggle('below', below);
       }
     });
-    el.addEventListener('dragleave', function() { this.classList.remove('dragover'); });
+    el.addEventListener('dragleave', function() { this.classList.remove('dragover','below'); });
     el.addEventListener('drop', async function(e) {
-      e.stopPropagation(); e.preventDefault(); this.classList.remove('dragover');
+      e.stopPropagation(); e.preventDefault(); this.classList.remove('dragover','below');
+      this.closest('.tjobs')?.classList.remove('dragover');
       if (!ds||this===ds) return;
       const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
       const tJob=jobs.find(x=>x.id===parseInt(this.dataset.id));
       if (!sJob||!tJob) return;
+      if (dropBusy()) return;
 
       // Dropped ONTO a card sitting in one of the lower/special columns.
       // Membership in those columns is purely the ticket's status colour, so
@@ -4757,66 +4851,19 @@ function bindDrag() {
       if (spTarget) { await retagJob(sJob, spTarget); return; }
 
       // Dropped onto a tech-board card, but the ticket came FROM a special
-      // column: send it back to today's board under that card's tech.
-      const fromSpecial = !!ds.dataset.spcard;
-      if (fromSpecial) { await moveJobToTech(sJob, tJob.tech, 'green'); return; }
+      // column: send it back to today's board under that card's tech, in
+      // that card's slot.
+      if (ds.dataset.spcard) { await moveJobToTech(sJob, tJob.tech, 'green', tJob); return; }
 
-      if (sJob.tech===tJob.tech) {
-        // Same column reorder
-        const sr=sJob.row, tr=tJob.row;
-        [sJob.row,tJob.row]=[tJob.row,sJob.row];
-        [sJob.job,tJob.job]=[tJob.job,sJob.job];
-        [sJob.color,tJob.color]=[tJob.color,sJob.color];
-        [sJob.address,tJob.address]=[tJob.address,sJob.address];
-        [sJob.lat,tJob.lat]=[tJob.lat,sJob.lat];
-        [sJob.lng,tJob.lng]=[tJob.lng,sJob.lng];
-        [sJob.notes,tJob.notes]=[tJob.notes,sJob.notes];
-        [sJob.tagged,tJob.tagged]=[tJob.tagged,sJob.tagged];
-        render(); updateMap();
-        // Guard auto-refresh until the swap fully persists to the sheet,
-        // otherwise loadData can race ahead, read pre-swap values, and
-        // revert the reorder in memory. After writes complete (success or
-        // failure), reconcile from the sheet so any stale in-memory state
-        // is cleared.
-        isSaving = true;
-        swapRows(sr, parseInt(ds.dataset.col), tr)
-          .catch(()=>toast('Reorder failed'))
-          .finally(()=>{
-            isSaving = false;
-            // Reconcile in-memory state with what's actually in the sheet
-            loadData();
-          });
-      } else {
-        // Cross-column: move job to target tech's column
-        const oldRow = sJob.row, oldCol = sJob.col;
-        const newTech = tJob.tech;
-        const newCol = TECHS.indexOf(newTech) + 1;
-        const occupied = new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
-        let newRow = null;
-        for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){newRow=r;break;} }
-        if (!newRow) { toast(`${newTech} column is full`); return; }
-        const srcVal  = jobCellValue(sJob);
-        const srcHex = STATUS_TO_HEX[sJob.color] || '#ffffff';
-        // Pause auto-refresh, write sheet first, then update UI
-        isSaving = true;
-        toast(`Moving to ${newTech}...`);
-        try {
-          await sheetsClear(oldRow, oldCol);
-          await sheetsSetValue(newRow, newCol, srcVal);
-          await sheetsSetBackground(newRow, newCol, srcHex);
-          sJob.tech = newTech; sJob.col = newCol; sJob.row = newRow;
-          render(); updateMap();
-          toast(`✓ Moved to ${newTech}`);
-        } catch(err) {
-          toast('Move failed — try again');
-          console.error('Cross-column move failed:', err);
-        } finally { isSaving = false; }
-      }
+      if (sJob.tech===tJob.tech) await reorderInColumn(sJob, tJob);
+      else await moveJobToTech(sJob, tJob.tech, null, tJob);
     });
     el.draggable = false;
   });
   // Drop on column body — tech columns (move tech) and special columns (retag).
-  // Handles empty columns too, which card-level handlers can't.
+  // Handles empty columns too, which card-level handlers can't. Card drops stop
+  // propagation, so this only fires for the space below the last card: the
+  // ticket goes to the bottom of that column.
   document.querySelectorAll('.tjobs').forEach(tj => {
     tj.addEventListener('dragover', e=>{ e.preventDefault(); tj.classList.add('dragover'); });
     tj.addEventListener('dragleave', ()=>tj.classList.remove('dragover'));
@@ -4825,6 +4872,7 @@ function bindDrag() {
       if(!ds) return;
       const sJob=jobs.find(x=>x.id===parseInt(ds.dataset.id));
       if(!sJob) return;
+      if (dropBusy()) return;
 
       // Special column: retag to that column's status, stay with the same tech.
       const spKey = tj.dataset.spkey;
@@ -4836,28 +4884,8 @@ function bindDrag() {
       // Coming out of a special column onto a tech column: move AND turn green
       // so it lands back on the active board rather than staying parked.
       if (ds.dataset.spcard) { await moveJobToTech(sJob, newTech, 'green'); return; }
-      if(newTech===sJob.tech) return;
-      const oldRow=sJob.row, oldCol=sJob.col;
-      const newCol=TECHS.indexOf(newTech)+1;
-      const occupied=new Set(jobs.filter(j=>j.tech===newTech).map(j=>j.row));
-      let newRow=null;
-      for(let r=JOB_ROW_START;r<=JOB_ROW_END;r++){if(!occupied.has(r)){newRow=r;break;}}
-      if(!newRow){toast(`${newTech} column is full`);return;}
-      const srcVal=sJob.job+(sJob.address?' - '+sJob.address:'');
-      const srcHex=STATUS_TO_HEX[sJob.color]||'#ffffff';
-      isSaving = true;
-      toast(`Moving to ${newTech}...`);
-      try {
-        await sheetsClear(oldRow,oldCol);
-        await sheetsSetValue(newRow,newCol,srcVal);
-        await sheetsSetBackground(newRow,newCol,srcHex);
-        sJob.tech=newTech; sJob.col=newCol; sJob.row=newRow;
-        render(); updateMap();
-        toast(`✓ Moved to ${newTech}`);
-      } catch(err) {
-        toast('Move failed — try again');
-        console.error('tjobs move failed:', err);
-      } finally { isSaving=false; }
+      if (newTech===sJob.tech) await reorderInColumn(sJob, null);
+      else await moveJobToTech(sJob, newTech);
     });
   });
 }
@@ -4991,14 +5019,13 @@ function updateMap() {
   });
   document.getElementById('mfpills').innerHTML=pillH;
 
-  // Sort: by TECHS column order, then SHOP tickets first (matches kanban
-  // which renders the shop card pinned at slot #1), then by row.
+  // Sort: by TECHS column order, then by row — the same top-to-bottom order
+  // as the board. (Shop tickets used to be pinned to #1 here, left over from
+  // when they lived in a separate row; they're added at the top of the column
+  // now, and a dispatcher who drags one down means it.)
   const sortJobs=arr=>arr.slice().sort((a,b)=>{
     const ti=TECHS.indexOf(a.tech)-TECHS.indexOf(b.tech);
     if(ti!==0) return ti;
-    const sa=SHOP_NAMES_SET.has(a.job)?0:1;
-    const sb=SHOP_NAMES_SET.has(b.job)?0:1;
-    if(sa!==sb) return sa-sb;
     return (a.row||0)-(b.row||0);
   });
   const vj=sortJobs(mapTech==='all'?tj:tj.filter(j=>j.tech===mapTech));
@@ -5080,16 +5107,11 @@ async function renderTechView(withMap=true) {
   const tvTickets = document.getElementById('tvTickets');
   const mapSec = document.getElementById('mapsecTech');
 
-  // Get today's green tickets — pin shop tickets to slot #1 (matches kanban
-  // which renders the shop card pinned at the top), then by row order.
-  const allTechJobs = jobs.filter(j=>j.tech===tech);
+  // Today's green tickets in sheet-row order — exactly the order and numbers
+  // the dispatcher sees on the board. No shop pinning: a shop ticket is added
+  // at the top of the column, and if it's been dragged down, that's the plan.
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
-  const myJobs = allTechJobs.filter(j=>j.color==='green').sort((a,b)=>{
-    const sa=SHOP_NAMES_SET.has(a.job)?0:1;
-    const sb=SHOP_NAMES_SET.has(b.job)?0:1;
-    if(sa!==sb) return sa-sb;
-    return (a.row||0)-(b.row||0);
-  });
+  const myJobs = techBoardJobs(tech).filter(j=>j.color==='green');
 
 
   // Geocode all addresses — skipped on first pass (withMap=false), done by geocodeGreenJobs instead
