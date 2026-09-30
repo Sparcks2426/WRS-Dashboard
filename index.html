@@ -954,18 +954,23 @@ const USERS = [
   { name:'Louis',             pin:'7912', role:'admin', tech:'Louis'    },
   { name:'Maikol',            pin:'1520', role:'read', tech:'Maikol'    },
   { name:'Jesse',             pin:'1488', role:'read', tech:'Jesse'     },
+  // Jesse Pearson. Login name must equal the column name: messages to a
+  // tech are addressed by column and read back by login name. His PIN lives
+  // only in the Worker (which validates logins), not in this public file.
+  { name:'Pearson',                        role:'read', tech:'Pearson'   },
 
 ];
 
 // ── Sheet Structure ──
 // NOTE: Sheet column layout must match this order:
 //   A=Jeff, B=Landi, C=Geni, D=Christian, E=Mijail, F=Alex, G=Louis,
-//   H=Maikol, I=Robert, J=Landon, K=Jesse, L=QUE, M=non-tech heartbeat
-const TECHS = ['Jeff','Landi','Geni','Christian','Mijail','Alex','Louis','Maikol','Robert','Landon','Jesse','QUE'];
+//   H=Maikol, I=Robert, J=Pearson (Jesse Pearson; was Landon), K=Jesse,
+//   L=QUE, M=non-tech heartbeat
+const TECHS = ['Jeff','Landi','Geni','Christian','Mijail','Alex','Louis','Maikol','Robert','Pearson','Jesse','QUE'];
 const TC = {
   Jeff:'#FF1A1A', Landi:'#FFEA00', Geni:'#39FF14', Christian:'#00FFFF',
   Mijail:'#0066FF', Alex:'#FF8C00', Louis:'#B800FF', Maikol:'#FF00FF',
-  Robert:'#FFD700', Landon:'#00A86B', Jesse:'#FF1493', QUE:'#FF8C00',
+  Robert:'#FFD700', Pearson:'#00A86B', Jesse:'#FF1493', QUE:'#FF8C00',
 };
 // Derived — QUE lives in the last tech column; non-tech heartbeats go one column past it.
 const QUE_COL = TECHS.indexOf('QUE') + 1;   // 12 (column L)
@@ -977,7 +982,7 @@ const QUE_COL = TECHS.indexOf('QUE') + 1;   // 12 (column L)
 // person instead. To reclaim the column for good, blank it in the sheet,
 // remove the name from TECHS in BOTH index.html and worker.js, and narrow the
 // A6:L30 ranges — all together, not piecemeal.
-const RETIRED_TECHS = new Set(['Landon','Robert']);
+const RETIRED_TECHS = new Set(['Robert']);
 
 // Use this everywhere the UI lists techs; use TECHS only for column math.
 const ACTIVE_TECHS = TECHS.filter(t => !RETIRED_TECHS.has(t));
@@ -1164,7 +1169,7 @@ const TECH_START_LOCATIONS = {
   'Louis':     { lat: null, lng: null, address: '6907 Lake Ave, West Palm Beach, FL 33405' },
   'Maikol':    { lat: null, lng: null, address: '2334 S Cypress Bend Dr, Pompano Beach, FL 33069' },
   'Jesse':     { lat: null, lng: null, address: '1770 SW 13th Ct, Pompano Beach, FL 33069' },
-  'Landon':    { lat: null, lng: null, address: '4603 Kelmar Dr, West Palm Beach, FL 33415' },
+  'Pearson':   { lat: null, lng: null, address: '' },
   'Robert':    { lat: null, lng: null, address: '' },
   'QUE':       { lat: null, lng: null, address: '' },
 };
