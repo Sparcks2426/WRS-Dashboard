@@ -104,6 +104,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .mlleg{font-size:11px;color:var(--gr);padding:4px 0 4px 30px;font-weight:600;border-bottom:1px solid var(--bd)}
 .mapbox{flex:1;position:relative}
 #lmap{position:absolute;inset:0}
+.darktiles{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) saturate(.35)}
+.leaflet-container{background:#0b0f18}
 
 /* ── BOARD ── */
 .mainarea{display:flex;gap:14px}
@@ -1139,7 +1141,9 @@ let _geoSaveTimer = null;
 function persistGeoCache() {
   clearTimeout(_geoSaveTimer);
   _geoSaveTimer = setTimeout(() => {
-    try { localStorage.setItem(GEO_LS_KEY, JSON.stringify(geoCache)); } catch(e) {}
+    const keep = {};
+    for (const k in geoCache) if (!geoCache[k].approx) keep[k] = geoCache[k];
+    try { localStorage.setItem(GEO_LS_KEY, JSON.stringify(keep)); } catch(e) {}
   }, 400);
 }
 
@@ -1736,87 +1740,149 @@ function parseJob(raw) {
 let googleGeoDead = false;
 
 // Addresses come off the service-management app as ZIP+4 ("FL 33467-3708") and
-// often carry a suite/unit. Nominatim returns nothing for either, which is why
-// a handful of perfectly valid tickets never got pins. Try the address as
-// given, then progressively simpler forms.
+// often carry a suite/unit. Nominatim returns nothing for either, so after the
+// address as given we try progressively simpler forms.
 const geoFailures = new Set();
 
 function addressVariants(addr) {
   const out = [];
   const push = s => { s = (s||'').replace(/\s{2,}/g,' ').replace(/\s*,\s*/g,', ').trim().replace(/,+$/,''); if (s && !out.includes(s)) out.push(s); };
+  const zip5 = s => s.replace(/\b(\d{5})-\d{4}\b/g, '$1');
+  // Spell out highway shorthand OSM doesn't match ("S US Hwy 1" → "South US Highway 1")
+  const hwy = s => s.replace(/\bHwy\b\.?/ig, 'Highway').replace(/\bSt\.? Rd\b\.?/ig, 'State Road')
+                    .replace(/\bSR[- ]?(\d+)\b/ig, 'State Road $1');
   push(addr);
-  // ZIP+4 → plain 5-digit ZIP
-  push(addr.replace(/\b(\d{5})-\d{4}\b/g, '$1'));
-  // Drop suite / unit / building / floor fragments
-  const noUnit = addr.replace(/[,\s]+(ste|suite|unit|apt|apartment|bldg|building|fl|floor|#)\s*[\w-]+/ig, '');
-  push(noUnit.replace(/\b(\d{5})-\d{4}\b/g, '$1'));
-  // Street + city + state, no ZIP at all
-  push(addr.replace(/\b\d{5}(-\d{4})?\b/g, ''));
+  push(zip5(addr));
+  push(hwy(zip5(addr)));
+  // Drop suite / unit / building / floor (NOT bare "FL" — that's Florida)
+  const noUnit = addr.replace(/[,\s]+(ste\.?|suite|unit|apt\.?|apartment|bldg\.?|building|floor|#)\s*[\w-]+/ig, '');
+  push(hwy(zip5(noUnit)));
+  // Street + city + state, no ZIP
+  push(hwy(noUnit.replace(/\b\d{5}(-\d{4})?\b/g, '')));
+  return out;
+}
+
+// Last-resort, APPROXIMATE forms: the street without a house number, then the
+// ZIP centroid. A pin on the right street beats no pin at all. These hits are
+// flagged approx and kept out of localStorage so a proper hit replaces them later.
+function approxVariants(addr) {
+  const out = [];
+  const zip = (addr.match(/\b(\d{5})(?:-\d{4})?\s*$/) || [])[1];
+  const st  = (addr.match(/\b(FL|Florida)\b/i) || [])[1] || 'FL';
+  const noNum = addr.replace(/^\s*\d+[A-Za-z]?\s+/, '').replace(/\b(\d{5})-\d{4}\b/g, '$1')
+                    .replace(/\bHwy\b\.?/ig, 'Highway');
+  if (noNum !== addr) out.push(noNum);
+  if (zip) out.push(`${zip}, ${st}, USA`);
   return out;
 }
 
 async function geocodeOne(addr, retries=3) {
   if (!addr) return null;
   if (geoCache[addr]) return geoCache[addr];
-  // Try simplified forms before giving up; cache the hit under the ORIGINAL
-  // address so the next load is instant.
   const variants = addressVariants(addr);
   for (let vi = 1; vi < variants.length; vi++) {
-    if (geoCache[variants[vi]]) { geoCache[addr] = geoCache[variants[vi]]; persistGeoCache(); return geoCache[addr]; }
+    if (geoCache[variants[vi]] && !geoCache[variants[vi]].approx) { geoCache[addr] = geoCache[variants[vi]]; persistGeoCache(); return geoCache[addr]; }
   }
   for (let vi = 0; vi < variants.length; vi++) {
     const hit = await geocodeRaw(variants[vi], vi === 0 ? retries : 1);
     if (hit) { geoCache[addr] = hit; persistGeoCache(); return hit; }
   }
+  for (const v of approxVariants(addr)) {
+    const hit = await geocodeRaw(v, 1, true);
+    if (hit) {
+      geoCache[addr] = { lat: hit.lat, lng: hit.lng, approx: true };
+      console.warn('Approximate pin only for', addr, '→', v);
+      return geoCache[addr];
+    }
+  }
   return null;
 }
 
-// The original single-form lookup, now callable per variant.
-async function geocodeRaw(addr, retries=3) {
-  if (!addr) return null;
-  if (geoCache[addr]) return geoCache[addr];
+// ── Google geocoding via the Maps JavaScript API ──
+// The REST endpoint (maps.googleapis.com/maps/api/geocode/json) refuses browser
+// keys that have website/referrer restrictions, and that refusal is what was
+// silently pushing every lookup down to Nominatim. The JS API's Geocoder is
+// built for browser keys, so it works with the key as configured.
+let gmapsGeocoder = null, gmapsLoadPromise = null;
+function loadGoogleGeocoder() {
+  if (gmapsGeocoder) return Promise.resolve(gmapsGeocoder);
+  if (!CONFIG.MAPS_API_KEY || googleGeoDead) return Promise.resolve(null);
+  if (gmapsLoadPromise) return gmapsLoadPromise;
+  gmapsLoadPromise = new Promise(resolve => {
+    let done = false;
+    const finish = g => { if (!done) { done = true; resolve(g); } };
+    // Google calls this global if the key is invalid or the domain isn't allowed.
+    window.gm_authFailure = () => {
+      googleGeoDead = true; gmapsGeocoder = null;
+      console.warn('Google Maps key rejected for this site — check the key\'s website restrictions and that Maps JavaScript API + Geocoding API are enabled.');
+      finish(null);
+    };
+    window.__wrsGmapsReady = async () => {
+      try {
+        const lib = google.maps.importLibrary ? await google.maps.importLibrary('geocoding') : google.maps;
+        gmapsGeocoder = new lib.Geocoder();
+      } catch (e) { console.warn('Google geocoder init failed:', e); }
+      finish(gmapsGeocoder);
+    };
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(CONFIG.MAPS_API_KEY)}&loading=async&callback=__wrsGmapsReady`;
+    s.async = true;
+    s.onerror = () => { googleGeoDead = true; finish(null); };
+    document.head.appendChild(s);
+    setTimeout(() => finish(gmapsGeocoder), 12000);
+  });
+  return gmapsLoadPromise;
+}
 
-  // ── Try Google first (fast, accurate) ──
-  // Every failure path here MUST fall through to Nominatim rather than throw.
-  // Previously this branch had no try/catch and returned null on any non-OK
-  // status, so a blocked key or a CORS rejection meant no ticket ever got
-  // coordinates — and updateMap() then hid the whole map with no explanation.
-  if (CONFIG.MAPS_API_KEY && !googleGeoDead) {
-    try {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&key=${CONFIG.MAPS_API_KEY}`;
-      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      const d = await r.json();
-      if (d.status === 'OK' && d.results?.[0]) {
-        const loc = d.results[0].geometry.location;
-        geoCache[addr] = { lat: loc.lat, lng: loc.lng };
-        persistGeoCache();
-        return geoCache[addr];
-      }
-      // Key/account-level problems apply to every address, not just this one —
-      // stop trying Google for the rest of the session.
-      if (['REQUEST_DENIED','OVER_QUERY_LIMIT','OVER_DAILY_LIMIT','INVALID_REQUEST'].includes(d.status)) {
-        googleGeoDead = true;
-        console.warn('Google geocoding disabled for this session:', d.status, d.error_message || '');
-      }
-      // ZERO_RESULTS or a one-off failure: fall through and let Nominatim try.
-    } catch (e) {
-      // Network error or CORS rejection — the browser can't use this endpoint.
+// "123 Main St, Boca Raton, FL 33431, USA" → drop the country suffix.
+function cleanFormatted(f) { return (f || '').replace(/,\s*(USA|United States)\s*$/i, '').trim(); }
+
+async function googleGeocode(addr, loose) {
+  const g = await loadGoogleGeocoder();
+  if (!g || googleGeoDead) return null;
+  try {
+    const { results } = await g.geocode({ address: addr, componentRestrictions: { country: 'US' } });
+    const r = results && results[0];
+    if (!r) return null;
+    // Ignore a "match" that only resolved to the whole state/county — that's
+    // Google giving up, not finding the site.
+    const t = r.types || [];
+    if (!loose && (t.includes('administrative_area_level_1') || t.includes('administrative_area_level_2') || t.includes('country'))) return null;
+    const l = r.geometry.location;
+    // Only offer Google's wording as a correction when it matched a real address.
+    const exact = !r.partial_match && (t.includes('street_address') || t.includes('premise') || t.includes('subpremise') || t.includes('establishment'));
+    return { lat: l.lat(), lng: l.lng(), formatted: cleanFormatted(r.formatted_address), exact };
+  } catch (e) {
+    const code = (e && (e.code || e.message)) || '';
+    if (/REQUEST_DENIED|OVER_QUERY_LIMIT|OVER_DAILY_LIMIT/.test(code)) {
       googleGeoDead = true;
-      console.warn('Google geocoding unreachable, falling back to Nominatim:', e?.message || e);
+      console.warn('Google geocoding disabled for this session:', code);
     }
+    return null;   // ZERO_RESULTS etc. — let Nominatim try
+  }
+}
+
+async function geocodeRaw(addr, retries=3, loose=false) {
+  if (!addr) return null;
+  if (geoCache[addr] && !geoCache[addr].approx) return geoCache[addr];
+
+  const g = await googleGeocode(addr, loose);
+  if (g) {
+    if (!loose) { geoCache[addr] = g; persistGeoCache(); }
+    return g;
   }
 
-  // ── Free Nominatim with retry + backoff ──
+  // ── Free Nominatim fallback, limited to the US ──
   for (let attempt=0; attempt<retries; attempt++) {
     try {
       if (attempt > 0) await new Promise(r=>setTimeout(r, 1500 * attempt));
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(addr)}`;
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(addr)}`;
       const r = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(6000) });
       const d = await r.json();
       if (d && d.length) {
-        geoCache[addr] = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
-        persistGeoCache();
-        return geoCache[addr];
+        const hit = { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+        if (!loose) { geoCache[addr] = hit; persistGeoCache(); }
+        return hit;
       }
     } catch(e) { /* retry */ }
   }
@@ -1858,7 +1924,7 @@ async function geocodeGreenJobs() {
     // kill the whole batch (and the updateMap() chained after it).
     try {
       const c = await geocodeOne(j.address);
-      if (c) { j.lat = c.lat; j.lng = c.lng; anyNew = true; }
+      if (c) { j.lat = c.lat; j.lng = c.lng; j.approx = !!c.approx; anyNew = true; if (c.approx) geoFailures.add(j.address); }
       else geoFailures.add(j.address);
     } catch(e) { geoFailures.add(j.address); console.warn('Geocode failed for', j.address, e?.message || e); }
     done++;
@@ -2233,7 +2299,25 @@ function jobCard(j, editable, stopNum, techColor) {
 
 // addJFull: reads both name + address fields, builds the combined cell value.
 // Address is REQUIRED — refuse to save if empty.
-function addJFull(tech) {
+// Look an address up with Google before saving and swap in Google's standard
+// wording, so the ticket always maps. Never blocks the save: if Google can't
+// help, the address goes in as typed and shows up in the FIX list.
+async function normalizeAddress(addr) {
+  try {
+    const hit = await Promise.race([
+      googleGeocode(addr, false),
+      new Promise(r => setTimeout(() => r(null), 5000)),
+    ]);
+    if (hit && hit.exact && hit.formatted) {
+      geoCache[hit.formatted] = { lat: hit.lat, lng: hit.lng }; persistGeoCache();
+      return { addr: hit.formatted, lat: hit.lat, lng: hit.lng, changed: hit.formatted !== addr };
+    }
+    if (hit) return { addr, lat: hit.lat, lng: hit.lng, changed: false };
+  } catch (e) {}
+  return { addr, lat: null, lng: null, changed: false, unverified: true };
+}
+
+async function addJFull(tech) {
   if (!canWrite) return;
   const nameInp = document.getElementById('ai_'+tech);
   const addrInp = document.getElementById('ai_addr_'+tech);
@@ -2254,21 +2338,53 @@ function addJFull(tech) {
     }
     return;
   }
-  const v = `${name}, ${addr}`;
   // Clear inputs + drop the saved draft so it doesn't come back
   nameInp.value = '';
   addrInp.value = '';
   clearTicketDraft(tech);
+  const norm = await normalizeAddress(addr);
+  if (norm.changed) toast(`Address corrected → ${norm.addr}`);
+  else if (norm.unverified) toast('Saved — but Google couldn\u2019t verify that address');
+  const v = `${name}, ${norm.addr}`;
   const parsed = parseJob(v);
   const occupied = new Set(jobs.filter(j=>j.tech===tech).map(j=>j.row));
   let targetRow = null;
   for (let r=JOB_ROW_START; r<=JOB_ROW_END; r++) { if(!occupied.has(r)){targetRow=r;break;} }
   if (!targetRow) { toast(`Column full (max ${MAX_TICKETS} tickets)`); return; }
   const col = TECHS.indexOf(tech)+1;
-  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:null, lng:null };
+  const newJob = { id: Date.now(), tech, job: parsed.name, address: parsed.addr, color:'green', row:targetRow, col, lat:norm.lat, lng:norm.lng };
   jobs.push(newJob);
   render(); updateMap();
   writeTicketCell(targetRow, col, v);
+}
+
+// One-click repair for a ticket already on the board that won't locate.
+// Tries Google's version first; if Google has nothing, lets you paste a new one.
+async function fixTicketAddress(id) {
+  if (!canWrite) return;
+  const j = jobs.find(x => x.id === id); if (!j) return;
+  toast('Checking address with Google...');
+  let hit = await googleGeocode(j.address, false);
+  let newAddr = (hit && hit.exact && hit.formatted) ? hit.formatted : null;
+  if (!newAddr || newAddr === j.address) {
+    const typed = window.prompt(
+      `Google couldn't confirm this address for "${j.job}".\n\nPaste the address exactly as Google Maps shows it:`,
+      j.address);
+    if (!typed || !typed.trim() || typed.trim() === j.address) return;
+    const n = await normalizeAddress(typed.trim());
+    newAddr = n.addr; hit = n.lat ? { lat: n.lat, lng: n.lng } : null;
+  } else if (!confirm(`Replace\n  ${j.address}\nwith Google's version\n  ${newAddr}?`)) {
+    return;
+  }
+  j.address = newAddr;
+  if (hit && hit.lat) { j.lat = hit.lat; j.lng = hit.lng; j.approx = false; }
+  render(); updateMap();
+  isSaving = true;
+  try {
+    await sheetsSetValue(j.row, j.col, jobCellValue(j, { address: newAddr }));
+    toast('✓ Address updated');
+  } catch (e) { toast('Couldn\u2019t save the new address'); console.error(e); }
+  finally { isSaving = false; loadData(); }
 }
 
 // ── writeTicketCell: value first, THEN colour ──
@@ -4872,7 +4988,7 @@ function initMap() {
   if (lmap) return;
   if (!mapReady()) return;
   lmap = L.map('lmap',{zoomControl:true,preferCanvas:true}).setView([26.35,-80.1],10);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'',keepBuffer:4}).addTo(lmap);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap',keepBuffer:4,className:'darktiles'}).addTo(lmap);
   markerLayer = L.layerGroup().addTo(lmap);
   routeLayer  = L.layerGroup().addTo(lmap);
   homeLayer   = L.layerGroup().addTo(lmap);
@@ -5010,7 +5126,7 @@ function updateMap() {
     const dark=['#006400','#0066FF','#B800FF','#FF00FF'].includes(tc);
     const isShop=SHOP_NAMES_SET.has(j.job);
     const icon=L.divIcon({className:'',html:`<div style="width:26px;height:26px;border-radius:50%;background:${tc};color:${dark?'#fff':'#000'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.6)${isShop?';outline:2px solid #fff;outline-offset:1px':''}">${num}</div>`,iconSize:[26,26],iconAnchor:[13,13]});
-    const mk=L.marker([j.lat,j.lng],{icon}).addTo(markerLayer).bindPopup(`<b>#${num}${isShop?' 🏠':''} — ${j.job}</b><br><span style="color:${tc};font-weight:700">${j.tech}</span><br><small>${j.address}</small>`);
+    const mk=L.marker([j.lat,j.lng],{icon}).addTo(markerLayer).bindPopup(`<b>#${num}${isShop?' 🏠':''} — ${j.job}</b>${j.approx?'<br><i style="color:#b45309">Approximate location</i>':''}<br><span style="color:${tc};font-weight:700">${j.tech}</span><br><small>${j.address}</small>`);
     markersArr.push({mk,lat:j.lat,lng:j.lng}); bounds.push([j.lat,j.lng]);
   });
   if(bounds.length) setTimeout(()=>lmap.fitBounds(bounds,{padding:[60,60],maxZoom:11}),200);
@@ -5047,12 +5163,16 @@ function renderMapList(vj, legs, totalMin, totalMi) {
   // dropped from the map with no trace — that's the "map is one short" gap.
   // List them so a bad address gets noticed and fixed.
   const unlocated = jobs.filter(j =>
-    j.color === 'green' && j.address && !(j.lat && j.lng) &&
+    j.color === 'green' && j.address && (!(j.lat && j.lng) || j.approx) &&
     (mapTech === 'all' || j.tech === mapTech));
+  const esc = t => String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
   const unlocatedHTML = unlocated.length
     ? `<div style="margin:6px 0 8px;padding:8px 10px;border-left:3px solid var(--yl);background:#2a220a;border-radius:4px;font-size:11px;color:var(--yl);font-weight:600">
-        ${unlocated.length} ticket${unlocated.length===1?'':'s'} not on the map — address wouldn't locate:
-        ${unlocated.map(j=>`<div style="color:var(--dm2);font-weight:500;margin-top:3px">${j.tech}: ${j.job} — ${j.address}</div>`).join('')}
+        ${unlocated.length} ticket${unlocated.length===1?'':'s'} need${unlocated.length===1?'s':''} an address check:
+        ${unlocated.map(j=>`<div style="color:var(--dm2);font-weight:500;margin-top:5px;display:flex;gap:6px;align-items:flex-start">
+          <span style="flex:1">${j.tech}: ${esc(j.job)} — ${esc(j.address)}${j.approx?' <span style="color:var(--yl)">(approximate pin)</span>':''}</span>
+          ${canWrite?`<button onclick="event.stopPropagation();fixTicketAddress(${j.id})" style="flex-shrink:0;background:var(--yl);color:#000;border:none;border-radius:5px;font-size:10px;font-weight:800;padding:3px 8px;cursor:pointer">FIX</button>`:''}
+        </div>`).join('')}
       </div>`
     : '';
   const tCtr={};
@@ -5163,8 +5283,8 @@ async function renderTechView(withMap=true) {
   // This avoids reloading all tiles on every refresh (major speed improvement)
   if (!lmapTech) {
     lmapTech = L.map('lmapTech',{zoomControl:true,preferCanvas:true}).setView([26.5,-80.2],10);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-      maxZoom:19, attribution:'', keepBuffer:4
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{className:'darktiles',attribution:'&copy; OpenStreetMap',
+      maxZoom:19, keepBuffer:4
     }).addTo(lmapTech);
     markerLayerTech = L.layerGroup().addTo(lmapTech);
     routeLayerTech  = L.layerGroup().addTo(lmapTech);
