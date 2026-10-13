@@ -5235,6 +5235,10 @@ function renderMapList(vj, legs, totalMin, totalMi) {
 // ════════════════════════════════════════════
 //  TECH VIEW
 // ════════════════════════════════════════════
+// Bumped every time the tech's list is drawn. A route lookup that answers after
+// a newer draw is dropped, so it can't put an older list back on screen.
+let techViewDraw = 0;
+
 async function renderTechView(withMap=true) {
   if (!curUser?.tech) return;
   const tech = curUser.tech;
@@ -5245,16 +5249,11 @@ async function renderTechView(withMap=true) {
   const tvTickets = document.getElementById('tvTickets');
   const mapSec = document.getElementById('mapsecTech');
 
-  // Today's green tickets in sheet-row order — exactly the order and numbers
-  // the dispatcher sees on the board. No shop pinning: a shop ticket is added
-  // at the top of the column, and if it's been dragged down, that's the plan.
   const SHOP_NAMES_SET = new Set(Object.keys(SHOP_LOCATIONS));
-  const myJobs = techBoardJobs(tech).filter(j=>j.color==='green');
-
 
   // Geocode all addresses — skipped on first pass (withMap=false), done by geocodeGreenJobs instead
   if (withMap) {
-    const toGeocode = myJobs.filter(j=>j.address && !SHOP_NAMES_SET.has(j.job));
+    const toGeocode = techBoardJobs(tech).filter(j=>j.color==='green' && j.address && !SHOP_NAMES_SET.has(j.job));
     for (const j of toGeocode) {
       if (geoCache[j.address]) {
         j.lat=geoCache[j.address].lat; j.lng=geoCache[j.address].lng;
@@ -5265,6 +5264,16 @@ async function renderTechView(withMap=true) {
       await new Promise(r=>setTimeout(r,geoDelayMs()));
     }
   }
+
+  // Read the ticket list only AFTER the lookups above. An address that won't
+  // locate can hold them up for a minute or more, and a refresh lands in the
+  // meantime; a list read before the wait then overwrote the newer one on
+  // screen, so a ticket the dispatcher could see went missing on the tech's
+  // phone. Today's green tickets in sheet-row order — exactly the order and
+  // numbers the dispatcher sees on the board. No shop pinning: a shop ticket is
+  // added at the top of the column, and if it's been dragged down, that's the plan.
+  const myJobs = techBoardJobs(tech).filter(j=>j.color==='green');
+  const draw = ++techViewDraw;
 
   // Ensure shop job always has coords from hardcoded SHOP_LOCATIONS
   myJobs.forEach(j => {
@@ -5352,6 +5361,7 @@ async function renderTechView(withMap=true) {
     console.log(`[Route] ${mapStops.length} stops for ${tech}:`, mapStops.map(s=>s.name));
     fetch(`https://router.project-osrm.org/route/v1/driving/${wp}?overview=full&geometries=geojson&steps=false`)
       .then(r=>r.json()).then(d=>{
+        if (draw !== techViewDraw) return;   // a newer list is already on screen
         console.log('[OSRM]', d.code, d.routes?.[0]?.legs?.length, 'legs');
         if(d.code==='Ok'&&d.routes&&d.routes[0]){
           const route=d.routes[0];
